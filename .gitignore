@@ -8,3 +8,5 @@
 .token_tracker.json
 .balance_snapshot.json
 debug_js.log
+/.idea/
+/memory/

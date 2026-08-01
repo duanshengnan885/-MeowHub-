@@ -12,8 +12,68 @@ if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
 
+
+def patch_pywebview_winforms_move():
+    """Avoid pywebview passing None to SetWindowPos for unchanged dimensions."""
+    if sys.platform != "win32":
+        return
+    try:
+        from webview.platforms import winforms
+
+        browser_form = winforms.BrowserView.BrowserForm
+        if getattr(browser_form, "_move_none_size_patched", False):
+            return
+
+        def move(self, x, y):
+            scale = getattr(self, "_scale", 1) or 1
+            x_phys = int(float(x) * scale)
+            y_phys = int(float(y) * scale)
+            user32 = winforms.windll.user32
+            user32.SetWindowPos.argtypes = [
+                ctypes.c_void_p, ctypes.c_void_p,
+                ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                ctypes.c_uint,
+            ]
+            user32.SetWindowPos.restype = ctypes.c_bool
+            handle = self.Handle.ToInt64() if hasattr(self.Handle, "ToInt64") else self.Handle.ToInt32()
+            user32.SetWindowPos(
+                ctypes.c_void_p(handle),
+                ctypes.c_void_p(0),
+                x_phys,
+                y_phys,
+                0,
+                0,
+                0x0001 | 0x0004 | 0x0040,  # SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW
+            )
+
+        browser_form.move = move
+        browser_form._move_none_size_patched = True
+        print("[Info] Applied pywebview WinForms move() ctypes compatibility patch")
+    except Exception as exc:
+        print(f"[Warn] Failed to patch pywebview WinForms move(): {exc}")
+
 # 模块全局变量以保持 Mutex 句柄不被释放
 _app_mutex = None
+APP_USER_MODEL_ID = "MeowHub.AIAssistant"
+
+
+def get_icon_path():
+    """Return the single icon path used by pywebview, the taskbar, and the tray."""
+    base_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_dir, "icon_final.ico")
+
+
+def set_windows_app_user_model_id():
+    """Keep Windows taskbar grouping/icon identity stable for source and packaged runs."""
+    if sys.platform != "win32":
+        return
+    try:
+        shell32 = ctypes.windll.shell32
+        shell32.SetCurrentProcessExplicitAppUserModelID.argtypes = [ctypes.c_wchar_p]
+        shell32.SetCurrentProcessExplicitAppUserModelID.restype = ctypes.c_long
+        shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except Exception as exc:
+        print(f"[Warn] Failed to set Windows AppUserModelID: {exc}")
 
 def check_single_instance():
     """使用 Win32 互斥体进行单实例检测，如果已经存在，则尝试唤醒已有窗口并退出"""
@@ -22,7 +82,7 @@ def check_single_instance():
         return True
     
     try:
-        mutex_name = "Global\\AI_Desktop_Workstation_Mutex"
+        mutex_name = "Global\\MeowHub_Mutex"
         kernel32 = ctypes.windll.kernel32
         # CreateMutexW(lpMutexAttributes, bInitialOwner, lpName)
         # ERROR_ALREADY_EXISTS = 183
@@ -33,9 +93,11 @@ def check_single_instance():
             user32 = ctypes.windll.user32
             user32.FindWindowW.restype = ctypes.c_void_p
             # 尝试寻找并唤醒主窗口
-            hwnd = AppAPI._find_window_hwnd("AI Desktop Workstation Cockpit")
+            hwnd = AppAPI._find_window_hwnd("星喵 (MeowHub)")
             if not hwnd:
-                hwnd = AppAPI._find_window_hwnd("AI Desktop Assistant")
+                hwnd = AppAPI._find_window_hwnd("AI Desktop Workstation Cockpit")
+                if not hwnd:
+                    hwnd = AppAPI._find_window_hwnd("AI Desktop Assistant")
             if hwnd:
                 # 9 = SW_RESTORE, 5 = SW_SHOW
                 user32.ShowWindow(hwnd, 9)
@@ -155,6 +217,10 @@ def setup_tray_icon(api_instance):
                 except Exception:
                     pass
 
+        def on_toggle_pet(icon, item):
+            val = not api_instance._current_pet_enabled()
+            api_instance.toggle_pet_window(val)
+
         def on_toggle_main_ontop(icon, item):
             config = load_all_configs()
             val = not config.get("main_window_on_top", False)
@@ -172,46 +238,52 @@ def setup_tray_icon(api_instance):
             api_instance.set_float_on_top_api(val)
 
         def on_exit(icon, item):
+            # Remove the shell notification icon before terminating the process.
+            api_instance.set_tray_icon(None)
+            try:
+                icon.visible = False
+            except Exception:
+                pass
             icon.stop()
             api_instance.close_app_completely()
 
-        # 动态创建 64x64 UFO 飞碟托盘图标 (暗紫色科幻感)
-        width, height = 64, 64
-        image = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-        dc = ImageDraw.Draw(image)
-        # 光晕
-        dc.ellipse([8, 20, 56, 44], fill=(129, 140, 248, 100), outline=(99, 102, 241, 255), width=2)
-        # 舱体
-        dc.ellipse([22, 10, 42, 30], fill=(168, 85, 247, 200), outline=(192, 132, 252, 255), width=2)
-        # 灯光
-        dc.ellipse([18, 30, 24, 36], fill=(52, 211, 153, 255))
-        dc.ellipse([30, 32, 34, 36], fill=(244, 63, 94, 255))
-        dc.ellipse([40, 30, 46, 36], fill=(52, 211, 153, 255))
+        # 加载本地生成的樱花粉星喵图标
+        try:
+            image = Image.open(get_icon_path())
+        except Exception as e:
+            print(f"[Warn] Failed to load tray icon: {e}")
+            image = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
 
         menu = pystray.Menu(
-            pystray.MenuItem("打开主控台", on_open_cockpit),
-            pystray.MenuItem("打开对话悬浮窗", on_open_float),
-            pystray.MenuItem("切换主窗口置顶", on_toggle_main_ontop),
-            pystray.MenuItem("切换悬浮窗置顶", on_toggle_float_ontop),
+            pystray.MenuItem("🌸 唤醒星喵主界面", on_open_cockpit, default=True),
+            pystray.MenuItem("💬 召唤对话悬浮窗", on_open_float),
+            pystray.MenuItem("🐱 召唤桌宠星喵", on_toggle_pet),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("退出应用", on_exit)
+            pystray.MenuItem("📌 切换主窗口置顶", on_toggle_main_ontop),
+            pystray.MenuItem("📍 切换悬浮窗置顶", on_toggle_float_ontop),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("💤 让星喵休息 (退出)", on_exit)
         )
         
-        icon = pystray.Icon("AI_Assistant", image, "AI Desktop Assistant", menu)
+        icon = pystray.Icon("AI_Assistant", image, "星喵 (MeowHub)", menu)
+        api_instance.set_tray_icon(icon)
         icon.run()
+        api_instance.set_tray_icon(None)
 
     t = threading.Thread(target=tray_thread, daemon=True)
     t.start()
 
 if __name__ == "__main__":
+    set_windows_app_user_model_id()
     # === Auto-backup project to F:\AI_Assistant_Backups ===
     import shutil
     from datetime import datetime
     try:
         backup_root = r"F:\AI_Assistant_Backups"
         project_dir = os.path.dirname(os.path.abspath(__file__))
+        project_name = os.path.basename(project_dir)
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        backup_dest = os.path.join(backup_root, f"ai_assistant_{timestamp}")
+        backup_dest = os.path.join(backup_root, f"{project_name}_{timestamp}")
         os.makedirs(backup_root, exist_ok=True)
         shutil.copytree(
             project_dir, backup_dest,
@@ -219,6 +291,22 @@ if __name__ == "__main__":
             dirs_exist_ok=True
         )
         print(f"[Backup] Project backed up to: {backup_dest}")
+        
+        # Keep only the last 10 backups
+        existing_backups = []
+        for d in os.listdir(backup_root):
+            if d.startswith(f"{project_name}_"):
+                full_path = os.path.join(backup_root, d)
+                if os.path.isdir(full_path):
+                    existing_backups.append(full_path)
+        existing_backups.sort()
+        if len(existing_backups) > 10:
+            for old_backup in existing_backups[:-10]:
+                try:
+                    shutil.rmtree(old_backup)
+                    print(f"[Backup] Deleted old backup: {old_backup}")
+                except Exception as ex:
+                    print(f"[Backup] Warning: Failed to delete old backup {old_backup}: {ex}")
     except Exception as e:
         print(f"[Backup] Warning: Failed to backup: {e}")
     # === End auto-backup ===
@@ -226,6 +314,8 @@ if __name__ == "__main__":
     if not check_single_instance():
         print("[Info] 检测到已有实例正在后台运行，已将其唤醒，当前进程干净退出。")
         sys.exit(0)
+
+    patch_pywebview_winforms_move()
 
     api = AppAPI()
     url = get_html_path()
@@ -236,7 +326,7 @@ if __name__ == "__main__":
 
     # 建立 1.618 黄金比例大双栏主控台桌面窗口 (1180 * 750)
     window = webview.create_window(
-        title="AI Desktop Workstation Cockpit",
+        title="星喵 (MeowHub)",
         url=url,
         js_api=api,
         width=1180,
@@ -289,14 +379,47 @@ if __name__ == "__main__":
         hidden=True
     )
 
+    # 建立 桌面宠物窗口 (全透明无边框)
+    pet_api = AppAPI()
+    pet_api.window_mode = "pet"
+    
+    pet_width = int(config.get("pet_width", 300))
+    pet_height = int(config.get("pet_height", 400))
+    pet_x = int(config.get("pet_x", screen_width - pet_width - 100))
+    pet_y = int(config.get("pet_y", 200))
+    pet_on_top = config.get("pet_on_top", True)
+    pet_enabled = AppAPI._coerce_bool(config.get("desktop_pet_enabled", False))
+    pet_initial_x = pet_x if pet_enabled else AppAPI.PET_OFFSCREEN_X
+    pet_initial_y = pet_y if pet_enabled else AppAPI.PET_OFFSCREEN_Y
+    
+    pet_url = "file:///" + os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_ui_assistant", "pet.html").replace('\\', '/')
+    
+    pet_window = webview.create_window(
+        title="AI Desktop Pet",
+        url=pet_url,
+        js_api=pet_api,
+        width=pet_width,
+        height=pet_height,
+        x=pet_initial_x,
+        y=pet_initial_y,
+        resizable=False,
+        frameless=True,
+        transparent=True,
+        on_top=pet_on_top,
+        # Keep WebView2 alive; disabled pets stay off-screen instead of hidden.
+        hidden=False
+    )
+
     # 给 API 传入双方的窗口控制引用
-    api.set_windows(main_window=window, float_window=float_window)
-    float_api.set_windows(main_window=window, float_window=float_window)
+    api.set_windows(main_window=window, float_window=float_window, pet_window=pet_window)
+    float_api.set_windows(main_window=window, float_window=float_window, pet_window=pet_window)
+    pet_api.set_windows(main_window=window, float_window=float_window, pet_window=pet_window)
 
     float_window.shown_once = False
     def on_float_shown():
         # Float window is created hidden; this fires when first shown via tray/settings
         if sys.platform == "win32":
+            user32 = ctypes.windll.user32
             try:
                 hwnd = None
                 if hasattr(float_window, 'native') and float_window.native:
@@ -315,12 +438,55 @@ if __name__ == "__main__":
                     api.register_float_hwnd(hwnd)
                     float_api.register_float_hwnd(hwnd)
                     print(f"[Info] Float window shown, HWND: {hwnd}")
+                    try:
+                        GWL_EXSTYLE = -20
+                        WS_EX_APPWINDOW = 0x00040000
+                        WS_EX_TOOLWINDOW = 0x00000080
+                        style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                        style = (style & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW
+                        user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+                    except Exception as e:
+                        print("Failed to hide float window from taskbar:", e)
             except Exception as e:
                 print("Failed to register float hwnd:", e)
 
         if not getattr(float_window, 'shown_once', False):
             float_window.shown_once = True
     float_window.events.shown += on_float_shown
+
+    def on_pet_shown():
+        if sys.platform == "win32":
+            user32 = ctypes.windll.user32
+            try:
+                hwnd = None
+                if hasattr(pet_window, 'native') and pet_window.native:
+                    try:
+                        hwnd = int(pet_window.native.Handle.ToInt64())
+                    except Exception:
+                        try:
+                            hwnd = int(pet_window.native.Handle)
+                        except Exception:
+                            pass
+                if not hwnd:
+                    user32 = ctypes.windll.user32
+                    user32.FindWindowW.restype = ctypes.c_void_p
+                    hwnd = AppAPI._find_window_hwnd("AI Desktop Pet")
+                if hwnd:
+                    api.register_pet_hwnd(hwnd)
+                    pet_api.register_pet_hwnd(hwnd)
+                    print(f"[Info] Pet window shown, HWND: {hwnd}")
+                    try:
+                        GWL_EXSTYLE = -20
+                        WS_EX_APPWINDOW = 0x00040000
+                        WS_EX_TOOLWINDOW = 0x00000080
+                        style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                        style = (style & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW
+                        user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+                    except Exception as e:
+                        print("Failed to hide pet window from taskbar:", e)
+            except Exception as e:
+                print("Failed to register pet hwnd:", e)
+    pet_window.events.shown += on_pet_shown
 
     def on_float_closing():
         float_window.hide()
@@ -338,8 +504,7 @@ if __name__ == "__main__":
             
         # 若主界面当前处于隐藏状态，说明主程序已被隐藏关闭，此处隐藏悬浮窗应导致彻底退出
         if not getattr(api, "_main_window_visible", True):
-            import os
-            os._exit(0)
+            api.close_app_completely()
         return False
     float_window.events.closing += on_float_closing
 
@@ -381,29 +546,30 @@ if __name__ == "__main__":
 
         action = config.get("close_action", "ask")
         if action == "minimize":
-            window.minimize()
-            return False
-        elif action == "close":
-            # 隐藏主窗口到系统托盘，不销毁，保留进程与托盘图标
-            window.hide()
-            api._main_window_visible = False
+            api.minimize_to_tray()
             float_api._main_window_visible = False
             return False
-        else:
-            # Use native Windows MessageBox for reliability (avoids WebView2 deadlock in FormClosing)
-            if sys.platform == "win32":
-                user32 = ctypes.windll.user32
-                # MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2 | MB_TOPMOST | MB_SETFOREGROUND
-                result = user32.MessageBoxW(0,
-                    "最小化到托盘还是彻底退出应用？\n\n是 = 最小化到托盘\n否 = 彻底退出",
-                    "AI Desktop Assistant",
-                    0x00000004 | 0x00000020 | 0x00000100 | 0x00040000 | 0x00010000)
-                if result == 6:  # IDYES = minimize to tray
-                    window.minimize()
-                    return False
-                # IDNO or close = exit completely
+
+        elif action == "close":
+            # Close the application completely; the tray icon and all windows are cleaned up.
             api.close_app_completely()
-            return False
+            return True
+        else:
+            # Trigger custom JS modal to prevent WebView2 deadlock
+            if sys.platform == "win32":
+                def _trigger_modal():
+                    try:
+                        import time
+                        time.sleep(0.1)
+                        window.evaluate_js("if(typeof window.showExitConfirmModal === 'function') window.showExitConfirmModal();")
+                    except Exception as e:
+                        print("Failed to trigger close modal:", e)
+                import threading
+                threading.Thread(target=_trigger_modal, daemon=True).start()
+                return False
+            else:
+                window.evaluate_js("if(typeof window.showExitConfirmModal === 'function') window.showExitConfirmModal();")
+                return False
 
     window.events.closing += on_closing
     
@@ -414,6 +580,7 @@ if __name__ == "__main__":
         
         # 捕获并注册主窗口句柄
         if sys.platform == "win32":
+            user32 = ctypes.windll.user32
             try:
                 hwnd = None
                 if hasattr(window, 'native') and window.native:
@@ -427,13 +594,34 @@ if __name__ == "__main__":
                 if not hwnd:
                     user32 = ctypes.windll.user32
                     user32.FindWindowW.restype = ctypes.c_void_p
-                    hwnd = AppAPI._find_window_hwnd("AI Desktop Workstation Cockpit")
+                    hwnd = AppAPI._find_window_hwnd("星喵 (MeowHub)")
+                    if not hwnd:
+                        hwnd = AppAPI._find_window_hwnd("AI Desktop Workstation Cockpit")
                     if not hwnd:
                         hwnd = AppAPI._find_window_hwnd("AI Desktop Assistant")
                 if hwnd:
                     api.register_main_hwnd(hwnd)
                     float_api.register_main_hwnd(hwnd)
                     print(f"[Info] Registered main window HWND: {hwnd}")
+                    # 动态设置主窗口图标
+                    try:
+                        icon_path = get_icon_path()
+                        user32.LoadImageW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+                        user32.LoadImageW.restype = ctypes.c_void_p
+                        hicon = user32.LoadImageW(None, icon_path, 1, 0, 0, 0x0010)
+                        
+                        user32.GetAncestor.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+                        user32.GetAncestor.restype = ctypes.c_void_p
+                        root_hwnd = user32.GetAncestor(hwnd, 3) # GA_ROOTOWNER = 3
+                        if not root_hwnd:
+                            root_hwnd = hwnd
+
+                        if hicon:
+                            user32.SendMessageW(root_hwnd, 0x0080, 0, hicon) # ICON_SMALL
+                            user32.SendMessageW(root_hwnd, 0x0080, 1, hicon) # ICON_BIG
+                            print(f"[Info] Icon applied to root HWND: {root_hwnd}")
+                    except Exception as ex:
+                        print(f"[Warn] Failed to set window icon: {ex}")
             except Exception as e:
                 print("Failed to register main hwnd:", e)
         
@@ -505,10 +693,11 @@ if __name__ == "__main__":
 
     # 强制启用 Windows 平台下的微软 WebView2 内核
     try:
-        webview.start(gui='edgechromium')
+        icon_path = get_icon_path()
+        webview.start(gui='edgechromium', icon=icon_path)
     except Exception as e:
         print("启动 EdgeChromium 内核失败，正在尝试默认模式启动...")
-        webview.start()
+        webview.start(icon=icon_path)
 
     # 强制退出当前进程以自动结束终端
     os._exit(0)

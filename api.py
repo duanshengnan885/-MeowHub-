@@ -14,9 +14,13 @@ import re
 import threading
 import time
 from openai import OpenAI
-from config import load_all_configs, save_all_configs, CONFIG_FILE
+from config import BASE_DIR, load_all_configs, save_all_configs, CONFIG_FILE
 
 class AppAPI:
+    COMFYUI_URL = "http://127.0.0.1:8188"
+    IMAGE_SAVE_DIR = str(BASE_DIR / "generated_images")
+    PET_OFFSCREEN_X = -10000
+    PET_OFFSCREEN_Y = -10000
     _current_bubble_text = ""
 
     @staticmethod
@@ -51,6 +55,11 @@ class AppAPI:
     _bubble_original_h = 450
     _main_hwnd = None
     _float_hwnd = None
+    _pet_hwnd = None
+    _pet_enabled_state = None
+    _tray_icon = None
+    _shutdown_started = False
+    _shutdown_lock = threading.Lock()
 
     def register_main_hwnd(self, hwnd):
         AppAPI._main_hwnd = hwnd
@@ -60,12 +69,43 @@ class AppAPI:
         AppAPI._float_hwnd = hwnd
         return "ok"
 
+    def register_pet_hwnd(self, hwnd):
+        AppAPI._pet_hwnd = hwnd
+        return "ok"
+
+    @classmethod
+    def set_tray_icon(cls, icon):
+        cls._tray_icon = icon
+
+    @classmethod
+    def stop_tray_icon(cls):
+        """Hide and stop pystray before the process exits."""
+        icon = cls._tray_icon
+        if icon is None:
+            return
+        try:
+            icon.visible = False
+        except Exception:
+            pass
+        try:
+            icon.stop()
+        except Exception:
+            pass
+
+    @classmethod
+    def is_shutdown_started(cls):
+        return cls._shutdown_started
+
     def __init__(self):
         self._window = None  
         self._main_window = None
         self._comfyui_process = None
         self._float_window = None
+        self._pet_window = None
         self._config = load_all_configs()
+        if AppAPI._pet_enabled_state is None:
+            AppAPI._pet_enabled_state = self._coerce_bool(self._config.get("desktop_pet_enabled", False))
+        self._pet_enabled = AppAPI._pet_enabled_state
         self._is_cancelled = False
         self.window_mode = "normal"
         self._main_window_visible = True
@@ -77,10 +117,11 @@ class AppAPI:
         self._window = window  
         self._main_window = window
 
-    def set_windows(self, main_window, float_window):
+    def set_windows(self, main_window, float_window, pet_window=None):
         self._window = main_window
         self._main_window = main_window
         self._float_window = float_window
+        self._pet_window = pet_window
 
     def get_window_mode(self):
         return self.window_mode
@@ -533,81 +574,181 @@ class AppAPI:
                 pass
         # 若主窗口当前隐藏，说明已关闭主界面，隐藏悬浮窗后，直接物理强退
         if not self._main_window_visible:
-            import os
-            os._exit(0)
+            self.close_app_completely()
         return "closed"
 
+    def _get_window_hwnd(self, kind):
+        """Resolve a pywebview HWND from the native handle or a known title."""
+        candidates = {
+            "main": (AppAPI._main_hwnd, ("星喵 (MeowHub)", "AI Desktop Workstation Cockpit", "AI Desktop Assistant")),
+            "float": (AppAPI._float_hwnd, ("AI Float Dialogue",)),
+            "pet": (AppAPI._pet_hwnd, ("AI Desktop Pet",)),
+        }
+        hwnd, titles = candidates[kind]
+        if hwnd:
+            return hwnd
+        for title in titles:
+            hwnd = AppAPI._find_window_hwnd(title)
+            if hwnd:
+                if kind == "main":
+                    AppAPI._main_hwnd = hwnd
+                elif kind == "float":
+                    AppAPI._float_hwnd = hwnd
+                else:
+                    AppAPI._pet_hwnd = hwnd
+                return hwnd
+        return None
+
+    def _set_window_topmost(self, kind, enabled):
+        """Apply topmost state using one typed Win32 path and force a redraw."""
+        if sys.platform != "win32":
+            return False
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = self._get_window_hwnd(kind)
+            if not hwnd:
+                return False
+            user32.SetWindowPos.argtypes = [
+                ctypes.c_void_p, ctypes.c_void_p,
+                ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                ctypes.c_uint,
+            ]
+            user32.SetWindowPos.restype = ctypes.c_bool
+            insert_after = ctypes.c_void_p(-1 if enabled else -2)
+            flags = 0x0001 | 0x0002 | 0x0010 | 0x0020 | 0x0040
+            ok = bool(user32.SetWindowPos(
+                ctypes.c_void_p(hwnd), insert_after, 0, 0, 0, 0, flags
+            ))
+            user32.RedrawWindow(ctypes.c_void_p(hwnd), None, None, 0x0001 | 0x0100 | 0x0400)
+            user32.UpdateWindow(ctypes.c_void_p(hwnd))
+            return ok
+        except Exception as exc:
+            print(f"[Warn] Failed to set {kind} topmost state: {exc}")
+            return False
+
     def set_float_on_top_api(self, enabled):
+        enabled = self._coerce_bool(enabled)
         self._config = load_all_configs()
         self._config["floating_dialogue_on_top"] = enabled
         save_all_configs(self._config)
-        
-        # 动态改变置顶层级 (Windows 平台)
-        if sys.platform == "win32":
-            try:
-                user32 = ctypes.windll.user32
-                # 声明正确的参数类型，防止 64 位 Python 下截断 HWND 参数
-                user32.FindWindowW.restype = ctypes.c_void_p
-                user32.SetWindowPos.argtypes = [
-                    ctypes.c_void_p, ctypes.c_void_p,
-                    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
-                    ctypes.c_uint
-                ]
-                user32.SetWindowPos.restype = ctypes.c_bool
-                hwnd = AppAPI._float_hwnd
-                if not hwnd:
-                    hwnd = AppAPI._find_window_hwnd("AI Float Dialogue")
-                if hwnd:
-                    # HWND_TOPMOST = -1, HWND_NOTOPMOST = -2
-                    HWND_TOPMOST = ctypes.c_void_p(-1 & 0xFFFFFFFFFFFFFFFF)
-                    HWND_NOTOPMOST = ctypes.c_void_p(-2 & 0xFFFFFFFFFFFFFFFF)
-                    insert_after = HWND_TOPMOST if enabled else HWND_NOTOPMOST
-                    SWP_NOSIZE = 0x0001
-                    SWP_NOMOVE = 0x0002
-                    SWP_NOACTIVATE = 0x0010
-                    user32.SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
-            except Exception as e:
-                print("动态修改置顶状态失败:", e)
+        self._set_window_topmost("float", enabled)
         return "ok"
 
     def set_main_on_top_api(self, enabled):
+        enabled = self._coerce_bool(enabled)
         self._config = load_all_configs()
         self._config["main_window_on_top"] = enabled
         save_all_configs(self._config)
-        
-        # 动态改变置顶层级 (Windows 平台)
+        self._set_window_topmost("main", enabled)
+        return "ok"
+
+    def set_pet_on_top_api(self, enabled):
+        enabled = self._coerce_bool(enabled)
+        self._config = load_all_configs()
+        self._config["pet_on_top"] = enabled
+        save_all_configs(self._config)
+        self._set_window_topmost("pet", enabled)
+        return "ok"
+
+    def save_pet_position(self, x, y):
+        self._config.update(load_all_configs())
+        self._config["desktop_pet_enabled"] = self._current_pet_enabled()
+        self._config["pet_x"] = int(x)
+        self._config["pet_y"] = int(y)
+        from config import save_all_configs
+        save_all_configs(self._config)
+        return "ok"
+
+    def get_pet_window_rect(self):
+        """Return the pet's screen coordinates for pointer-based dragging."""
         if sys.platform == "win32":
             try:
                 user32 = ctypes.windll.user32
-                # 声明正确的参数类型，防止 64 位 Python 下截断 HWND 参数
-                user32.FindWindowW.restype = ctypes.c_void_p
-                user32.SetWindowPos.argtypes = [
-                    ctypes.c_void_p, ctypes.c_void_p,
-                    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
-                    ctypes.c_uint
-                ]
-                user32.SetWindowPos.restype = ctypes.c_bool
-                hwnd = AppAPI._main_hwnd
-                if not hwnd:
-                    hwnd = AppAPI._find_window_hwnd("AI Desktop Workstation Cockpit")
-                if not hwnd:
-                    hwnd = AppAPI._find_window_hwnd("AI Desktop Assistant")
+                hwnd = AppAPI._pet_hwnd or AppAPI._find_window_hwnd("AI Desktop Pet")
                 if hwnd:
-                    # HWND_TOPMOST = -1, HWND_NOTOPMOST = -2
-                    HWND_TOPMOST = ctypes.c_void_p(-1 & 0xFFFFFFFFFFFFFFFF)
-                    HWND_NOTOPMOST = ctypes.c_void_p(-2 & 0xFFFFFFFFFFFFFFFF)
-                    insert_after = HWND_TOPMOST if enabled else HWND_NOTOPMOST
-                    SWP_NOSIZE = 0x0001
-                    SWP_NOMOVE = 0x0002
-                    SWP_NOACTIVATE = 0x0010
-                    user32.SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
-            except Exception as e:
-                print("动态修改主窗口置顶状态失败:", e)
+                    class RECT(ctypes.Structure):
+                        _fields_ = [
+                            ("left", ctypes.c_long),
+                            ("top", ctypes.c_long),
+                            ("right", ctypes.c_long),
+                            ("bottom", ctypes.c_long),
+                        ]
+
+                    rect = RECT()
+                    user32.GetWindowRect.argtypes = [ctypes.c_void_p, ctypes.POINTER(RECT)]
+                    user32.GetWindowRect.restype = ctypes.c_bool
+                    if user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                        scale = self._pet_window_scale(hwnd)
+                        return {
+                            "x": round(rect.left / scale),
+                            "y": round(rect.top / scale),
+                            "width": round((rect.right - rect.left) / scale),
+                            "height": round((rect.bottom - rect.top) / scale),
+                            "scale": scale,
+                        }
+            except Exception as exc:
+                print(f"[Warn] Failed to read pet window rect: {exc}")
+
+        if self._pet_window:
+            try:
+                return {
+                    "x": int(self._pet_window.x),
+                    "y": int(self._pet_window.y),
+                    "width": int(self._config.get("pet_width", 300)),
+                    "height": int(self._config.get("pet_height", 400)),
+                }
+            except Exception:
+                pass
+        return None
+
+    def move_pet_window(self, x, y):
+        """Move the pet without invoking pywebview's broken None-size call."""
+        if not self._pet_window:
+            return "error: no pet window"
+        return "ok" if self._set_pet_window_pos(x, y, redraw=False) else "error: move failed"
+
+    def toggle_pet_window(self, enabled, persist=True):
+        """Toggle visibility while keeping WebView2 alive off-screen."""
+        if not getattr(self, '_pet_window', None):
+            return "error: no pet window"
+
+        enabled = self._coerce_bool(enabled)
+        AppAPI._pet_enabled_state = enabled
+        self._pet_enabled = enabled
+        self._config["desktop_pet_enabled"] = enabled
+
+        # 同步 UI 状态：托盘和桌宠窗口触发时，主面板只反映后端真相
+        if getattr(self, '_main_window', None):
+            try:
+                self._main_window.evaluate_js(
+                    f"if(window.syncPetEnabledUI) window.syncPetEnabledUI({str(enabled).lower()});"
+                )
+            except Exception:
+                pass
+
+        try:
+            self._pet_window.show()
+        except Exception:
+            pass
+        if enabled:
+            x = self._config.get("pet_x", 0)
+            y = self._config.get("pet_y", 0)
+        else:
+            x = self.PET_OFFSCREEN_X
+            y = self.PET_OFFSCREEN_Y
+        self._set_pet_window_pos(x, y, redraw=True)
+
+        # Direct tray/API toggles persist only the current disk configuration plus
+        # this state, so a stale pet API instance cannot overwrite other settings.
+        if persist:
+            persisted_config = load_all_configs()
+            persisted_config["desktop_pet_enabled"] = enabled
+            save_all_configs(persisted_config)
+            self._config = persisted_config
         return "ok"
 
     def exit_app(self):
-        import os
-        os._exit(0)
+        self.close_app_completely()
 
     def log_js_error(self, error_msg):
         try:
@@ -626,9 +767,88 @@ class AppAPI:
         return "logged"
 
     def get_config(self):
+        self._config["desktop_pet_enabled"] = self._current_pet_enabled()
         return self._config
 
+    @staticmethod
+    def _coerce_bool(value):
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
+        return bool(value)
+
+    def _current_pet_enabled(self):
+        if AppAPI._pet_enabled_state is None:
+            AppAPI._pet_enabled_state = self._coerce_bool(self._config.get("desktop_pet_enabled", False))
+        self._pet_enabled = AppAPI._pet_enabled_state
+        return self._pet_enabled
+
+    def _pet_window_scale(self, hwnd=None):
+        if sys.platform != "win32":
+            return 1.0
+        try:
+            hwnd = hwnd or AppAPI._pet_hwnd
+            if hwnd:
+                get_dpi = ctypes.windll.user32.GetDpiForWindow
+                get_dpi.argtypes = [ctypes.c_void_p]
+                get_dpi.restype = ctypes.c_uint
+                dpi = get_dpi(hwnd)
+                if dpi:
+                    return max(float(dpi) / 96.0, 0.1)
+        except Exception:
+            pass
+        return 1.0
+
+    def _set_pet_window_pos(self, x, y, redraw=True, logical=True):
+        """Move the live WebView2 window without hiding its renderer."""
+        hwnd = AppAPI._pet_hwnd
+        if sys.platform == "win32" and not hwnd:
+            hwnd = AppAPI._find_window_hwnd("AI Desktop Pet")
+            if hwnd:
+                AppAPI._pet_hwnd = hwnd
+        scale = self._pet_window_scale(hwnd) if logical else 1.0
+        x = int(round(float(x) * scale))
+        y = int(round(float(y) * scale))
+        if sys.platform == "win32":
+            try:
+                user32 = ctypes.windll.user32
+                user32.SetWindowPos.argtypes = [
+                    ctypes.c_void_p, ctypes.c_void_p,
+                    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                    ctypes.c_uint,
+                ]
+                user32.SetWindowPos.restype = ctypes.c_bool
+                if hwnd:
+                    on_top = self._config.get("pet_on_top", True)
+                    insert_after = ctypes.c_void_p(-1 if on_top else -2)
+                    flags = 0x0001 | 0x0010 | 0x0040  # SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW
+                    if redraw:
+                        flags |= 0x0020  # SWP_FRAMECHANGED
+                    user32.ShowWindow(hwnd, 4)  # SW_SHOWNOACTIVATE
+                    user32.SetWindowPos(hwnd, insert_after, x, y, 0, 0, flags)
+                    if redraw:
+                        user32.RedrawWindow(hwnd, None, None, 0x0001 | 0x0100 | 0x0400)
+                        user32.UpdateWindow(hwnd)
+                    return True
+            except Exception as exc:
+                print(f"[Warn] Native pet window move failed: {exc}")
+
+        if self._pet_window:
+            try:
+                self._pet_window.show()
+                self._pet_window.move(x, y)
+                return True
+            except Exception as exc:
+                print(f"[Warn] pywebview pet window move failed: {exc}")
+        return False
+
     def save_config(self, new_config):
+        new_config = dict(new_config or {})
+        # The desktop-pet state is session-owned by the backend. Only a UI
+        # change explicitly marked by the frontend may overwrite it.
+        if not new_config.pop("_desktop_pet_enabled_dirty", False):
+            new_config.pop("desktop_pet_enabled", None)
+        self._config = load_all_configs()
+        self._config["desktop_pet_enabled"] = self._current_pet_enabled()
         self._config.update(new_config)
         
         # 1. 如果新配置中有 autostart 字段，同步更新 Windows 注册表开机自启项
@@ -673,7 +893,18 @@ class AppAPI:
             except Exception:
                 pass
 
+        # 4. 实时同步桌宠显隐
+        if "desktop_pet_enabled" in new_config:
+            enabled = self._coerce_bool(new_config["desktop_pet_enabled"])
+            AppAPI._pet_enabled_state = enabled
+            self._pet_enabled = enabled
+            if not enabled and getattr(self, '_pet_window', None):
+                self.toggle_pet_window(False, persist=False)
+            elif enabled and getattr(self, '_pet_window', None):
+                self.toggle_pet_window(True, persist=False)
+
         try:
+            from config import save_all_configs
             save_all_configs(self._config)
             return {"status": "success", "msg": "配置与会话已成功分轨存盘"}
         except Exception as e:
@@ -682,6 +913,34 @@ class AppAPI:
 
     def cancel_chat(self):
         self._is_cancelled = True
+
+    def silent_llm_request(self, prompt):
+        """后台静默请求 LLM（用于自动提取标题等）"""
+        try:
+            provider = self._config.get("provider", "deepseek")
+            providers = self._config.get("providers", {})
+            prov_cfg = providers.get(provider, {})
+            
+            api_key = prov_cfg.get("api_key", "").strip()
+            api_base = prov_cfg.get("api_base", "").strip()
+            model = self._config.get("active_model", "").strip()
+            
+            if provider == "local":
+                client = OpenAI(base_url=api_base or "http://localhost:11434/v1", api_key="ollama")
+            else:
+                if not api_key:
+                    return ""
+                client = OpenAI(api_key=api_key, base_url=api_base)
+                
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                stream=False
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"[Warn] Silent LLM Request Failed: {e}")
+            return ""
 
     # ==========================================
     # 【剪贴板模块】：被动监听 WM_CLIPBOARDUPDATE，不再轮询抢占系统剪贴板锁
@@ -989,29 +1248,36 @@ class AppAPI:
                         continue
                         
                     model_type = "chat"
-                    context = "8K"
+                    context = None
                     
-                    if "drawing" in m_id_lower or "dall-e" in m_id_lower or "cogview" in m_id_lower:
+                    if "drawing" in m_id_lower or "dall-e" in m_id_lower or "cogview" in m_id_lower or "midjourney" in m_id_lower:
                         model_type = "drawing"
                         context = "画图"
-                    elif "reasoner" in m_id_lower or "r1" in m_id_lower or "thinking" in m_id_lower or "k2.6" in m_id_lower or "k2.5" in m_id_lower:
+                    elif "reasoner" in m_id_lower or "r1" in m_id_lower or "thinking" in m_id_lower or "k2.6" in m_id_lower or "k2.5" in m_id_lower or "o1" in m_id_lower or "o3" in m_id_lower:
                         model_type = "reasoning"
                         
-                    if "256k" in m_id_lower or "k2.6" in m_id_lower or "k2.5" in m_id_lower:
-                        context = "256K"
-                    elif "128k" in m_id_lower or "chat" in m_id_lower:
-                        # DeepSeek chat is 128k
-                        context = "128K"
-                    elif "64k" in m_id_lower or "reasoner" in m_id_lower:
-                        # DeepSeek reasoner is 64k output context
-                        context = "64K"
-                    elif "32k" in m_id_lower:
-                        context = "32K"
-                    elif "8k" in m_id_lower:
-                        context = "8K"
-                    elif model_type == "drawing":
-                        context = "画图"
+                    import re
+                    match_k = re.search(r'(\d+)k', m_id_lower)
+                    if match_k and not context:
+                        context = f"{match_k.group(1)}K"
                         
+                    if not context:
+                        if "claude-3" in m_id_lower:
+                            context = "200K"
+                        elif "gemini-1.5" in m_id_lower or "gemini-pro" in m_id_lower or "gemini-2" in m_id_lower:
+                            context = "1024K"
+                        elif "deepseek" in m_id_lower or "qwen" in m_id_lower or "yi" in m_id_lower or provider == "deepseek":
+                            if "reasoner" in m_id_lower or "r1" in m_id_lower:
+                                context = "64K"
+                            else:
+                                context = "128K"
+                        elif "k2.6" in m_id_lower or "k2.5" in m_id_lower:
+                            context = "256K"
+                        elif model_type == "drawing":
+                            context = "画图"
+                        else:
+                            context = "128K" # Global fallback for modern LLMs
+                            
                     name = m_id
                     if provider == "kimi":
                         if "k2.6" in m_id_lower:
@@ -1026,11 +1292,11 @@ class AppAPI:
                             name = "Kimi-v1-128K (超长文本)"
                         elif "cogview" in m_id_lower:
                             name = "Kimi-CogView-3 (绘图)"
-                    elif provider == "deepseek":
-                        if "chat" in m_id_lower:
-                            name = "DeepSeek-V3"
-                        elif "reasoner" in m_id_lower:
-                            name = "DeepSeek-R1"
+                    else:
+                        if "deepseek" in name.lower() or provider == "deepseek":
+                            name = re.sub(r'(?i)deepseek', 'DeepSeek', name)
+                            name = re.sub(r'(?i)(v3|v4|r1|v2)', lambda m: m.group(1).upper(), name)
+                            name = re.sub(r'(?i)pro', 'Pro', name)
                             
                     result_list.append({
                         "id": m_id,
@@ -1545,92 +1811,75 @@ class AppAPI:
             except Exception:
                 pass
 
-    def get_system_stats(self):
-        """获取系统硬件运行数据和网络状态，支持前台Orb及Popover看板"""
-        import psutil
-        import socket
-        
-        # 1. CPU 负载
-        cpu_percent = psutil.cpu_percent(interval=None)
-        
-        # 2. 内存使用率
-        virtual_mem = psutil.virtual_memory()
-        ram_percent = virtual_mem.percent
-        
-        # 3. 检查网络连接状态 (尝试连接到某个公共DNS或主机)
-        network_status = "已连接"
-        try:
-            socket.setdefaulttimeout(0.8)
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.connect(("223.5.5.5", 53))
-            s.close()
-        except Exception:
-            network_status = "未连接"
-            
-        # 4. 获取当前激活的模型和提供商
-        active_model = self._config.get("active_model", "无")
-        provider = self._config.get("provider", "未知")
-        
-        # 5. 检查本地 Ollama 状态
-        ollama_status = "未运行"
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.connect(("127.0.0.1", 11434))
-            s.close()
-            ollama_status = "运行中"
-        except Exception:
-            pass
-            
-        return {
-            "cpu": cpu_percent,
-            "ram": ram_percent,
-            "network": network_status,
-            "active_model": active_model,
-            "provider": provider,
-            "ollama_status": ollama_status
-        }
+    def minimize_to_tray(self):
+        """Hide the main window and desktop pet while keeping the tray process alive."""
+        main_window = self._main_window or self._window
+        if main_window:
+            try:
+                main_window.hide()
+            except Exception:
+                try:
+                    main_window.minimize()
+                except Exception:
+                    pass
+        if self._float_window:
+            try:
+                self._float_window.hide()
+            except Exception:
+                pass
+        if self._pet_window:
+            try:
+                self._set_pet_window_pos(self.PET_OFFSCREEN_X, self.PET_OFFSCREEN_Y, redraw=False)
+            except Exception:
+                pass
+        self._main_window_visible = False
+        return "minimized_to_tray"
 
     def minimize_window(self):
-        """前端控制最小化窗口"""
-        if self._window:
-            self._window.minimize()
-        return "minimized"
+        """Backward-compatible alias used by older frontend code."""
+        return self.minimize_to_tray()
 
     
     def _kill_comfyui(self):
-        """强制杀死 ComfyUI 子进程及其子进程树"""
-        # 先杀追踪的子进程
+        """Stop only the ComfyUI process launched by this application."""
         if self._comfyui_process:
             try:
-                self._comfyui_process.kill()
+                self._comfyui_process.terminate()
                 self._comfyui_process.wait(timeout=3)
             except Exception:
-                pass
+                try:
+                    self._comfyui_process.kill()
+                except Exception:
+                    pass
             self._comfyui_process = None
-        # 精准清理：通过 8188 端口找到 PID 并杀死
-        try:
-            import subprocess as _sp
-            if sys.platform == "win32":
-                r = _sp.run(["cmd", "/c", "netstat -ano | findstr :8188 | findstr LISTENING"], capture_output=True, text=True, timeout=5)
-                for line2 in r.stdout.strip().splitlines():
-                    parts = line2.strip().split()
-                    if parts:
-                        pid = parts[-1]
-                        if pid.isdigit():
-                            _sp.run(["taskkill", "/F", "/PID", pid, "/T"], capture_output=True, timeout=10)
-                # 兜底：杀 ComfyUI 目录下的大内存 python 进程
-                _sp.run(["taskkill", "/F", "/FI", "IMAGENAME eq python.exe", "/FI", "MEMUSAGE gt 200000"], capture_output=True, timeout=10)
-            else:
-                _sp.run(["pkill", "-f", "ComfyUI"], capture_output=True, timeout=5)
-        except Exception:
-            pass
 
     def close_app_completely(self):
-        """前端控制彻底关闭强退软件（绕过 on_closing 拦截）"""
+        """Stop tray/background resources, destroy every window, and terminate the process."""
+        with AppAPI._shutdown_lock:
+            if AppAPI._shutdown_started:
+                return "shutting_down"
+            AppAPI._shutdown_started = True
+
+        AppAPI.stop_tray_icon()
         self._kill_comfyui()
-        if self._window:
-            self._window.destroy()
-        import os
+
+        windows = []
+        for attr in ("_main_window", "_float_window", "_pet_window"):
+            window = getattr(self, attr, None)
+            if window is not None and window not in windows:
+                windows.append(window)
+
+        for window in windows:
+            try:
+                window.hide()
+            except Exception:
+                pass
+        for window in windows:
+            try:
+                window.destroy()
+            except Exception:
+                pass
+
         os._exit(0)
 
     def open_data_directory(self):
@@ -1683,59 +1932,6 @@ class AppAPI:
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    def restart_linked_app(self, app_name_or_path):
-        """杀掉并重启指定的第三方联动应用"""
-        try:
-            if not app_name_or_path:
-                return {"status": "error", "message": "未提供应用路径或名称"}
-            
-            # 特殊应用代号映射到标准的（进程名，启动命令名）
-            app_map = {
-                "opencode": ("OpenCode.exe", "opencode"),
-                "openclaw": ("OpenClaw.exe", "openclaw"),
-                "vscode": ("Code.exe", "code"),
-                "cursor": ("Cursor.exe", "cursor"),
-                "zed": ("zed.exe", "zed"),
-            }
-            
-            app_key = app_name_or_path.lower()
-            proc_name = app_name_or_path
-            cmd_name = app_name_or_path
-            
-            if app_key in app_map:
-                proc_name, cmd_name = app_map[app_key]
-                if app_key == "zed":
-                    config = self.get_config()
-                    win_path = config.get("zed_win_path", "")
-                    if win_path and os.path.isfile(win_path):
-                        app_name_or_path = win_path
-                    else:
-                        app_name_or_path = proc_name
-                else:
-                    app_name_or_path = proc_name
-            else:
-                proc_name = os.path.basename(app_name_or_path)
-                cmd_name = proc_name
-                
-            if sys.platform == "win32":
-                # 杀掉现有进程
-                subprocess.run(
-                    ["taskkill", "/F", "/IM", proc_name],
-                    capture_output=True, timeout=5
-                )
-                import time; time.sleep(1)
-                
-                # 重新启动
-                if os.path.isabs(app_name_or_path) and os.path.isfile(app_name_or_path):
-                    subprocess.Popen([app_name_or_path])
-                else:
-                    # 尝试通过系统 Shell 启动
-                    subprocess.Popen(f"start /b {cmd_name}", shell=True)
-                return {"status": "success", "action": "restarted", "app": proc_name}
-            return {"status": "success", "action": "killed", "app": proc_name}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-
     def send_windows_toast(self, title, message):
         """发送 Windows 10/11 原生 Toast 弹窗通知"""
         try:
@@ -1781,71 +1977,6 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
             if result and len(result) > 0:
                 return {"status": "success", "path": result[0]}
             return {"status": "cancelled"}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-
-    def get_quota_status(self):
-        """获取当前 AI 服务配额状态（当前返回模拟数据，后续可对接真实 API）"""
-        try:
-            config = self.get_config()
-            provider = config.get("provider", "deepseek")
-            active_model = config.get("active_model", "unknown")
-            return {
-                "status": "success",
-                "provider": provider,
-                "model": active_model,
-                "quota_remaining": "正常（未对接配额 API）",
-                "credits": "未知",
-                "last_refresh": "刚刚"
-            }
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-
-    def overwrite_editor_session(self, editor_name, session_token=""):
-        """覆盖第三方编辑器的本地登录 Session 信息（切号后联动写入）"""
-        try:
-            app_data = os.environ.get("APPDATA", "")
-            user_home = os.path.expanduser("~")
-            # 各编辑器的 Session 存储路径映射（需按实际安装路径调整）
-            paths = {
-                "opencode": os.path.join(app_data, "OpenCode", "session.json"),
-                "openclaw": os.path.join(app_data, "OpenClaw", "session.json"),
-                "zed": os.path.join(user_home, ".config", "zed", "session.json"),
-            }
-            target_path = paths.get(editor_name.lower())
-            if not target_path:
-                return {"status": "error", "message": f"未知编辑器: {editor_name}"}
-
-            target_dir = os.path.dirname(target_path)
-            os.makedirs(target_dir, exist_ok=True)
-
-            import json as _json
-            session_data = {
-                "token": session_token or "test_token_placeholder",
-                "updated_at": str(__import__("datetime").datetime.now().isoformat()),
-                "source": "AI Desktop Workstation"
-            }
-            with open(target_path, "w", encoding="utf-8") as f:
-                _json.dump(session_data, f, ensure_ascii=False, indent=2)
-            return {"status": "success", "path": target_path, "editor": editor_name}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-
-    def get_zed_quota_status(self):
-        """获取 Zed 工具的配额状态（模拟数据，后续可对接真实 API）"""
-        try:
-            config = self.get_config()
-            zed_win = config.get("zed_win_path", "")
-            zed_wsl = config.get("zed_wsl_path", "")
-            zed_found = os.path.isfile(zed_win) if zed_win else False
-            return {
-                "status": "success",
-                "zed_win_path": zed_win or "未配置",
-                "zed_wsl_path": zed_wsl or "未配置",
-                "zed_found": zed_found,
-                "quota": "正常（Zed 配额 API 未对接）",
-                "last_refresh": "刚刚"
-            }
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
@@ -1907,55 +2038,6 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    def run_custom_script_async(self, script_id, script_type, code):
-        """多线程异步运行自定义 PowerShell/Python 脚本并向前端流式传输 stdout 日志"""
-        if not self._window:
-            return {"status": "error", "message": "Window instance not found"}
-        
-        def worker():
-            try:
-                suffix = ".ps1" if script_type == "powershell" else ".py"
-                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False, mode="w", encoding="utf-8") as f:
-                    f.write(code)
-                    temp_path = f.name
-                
-                if script_type == "powershell":
-                    cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", temp_path]
-                else:
-                    cmd = ["python", "-u", temp_path]
-                    
-                process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="ignore",
-                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-                )
-                
-                self._window.evaluate_js(f"onScriptStart({json.dumps(script_id)})")
-                
-                for line in iter(process.stdout.readline, ''):
-                    line_escaped = json.dumps(line)
-                    self._window.evaluate_js(f"onScriptOutput({json.dumps(script_id)}, {line_escaped})")
-                    
-                process.stdout.close()
-                return_code = process.wait()
-                
-                try:
-                    os.unlink(temp_path)
-                except Exception:
-                    pass
-                    
-                self._window.evaluate_js(f"onScriptEnd({json.dumps(script_id)}, {return_code})")
-            except Exception as e:
-                err_msg = json.dumps(str(e))
-                self._window.evaluate_js(f"onScriptError({json.dumps(script_id)}, {err_msg})")
-                
-        threading.Thread(target=worker, daemon=True).start()
-        return {"status": "success"}
-
     def import_local_model_file(self):
         """导入本地模型文件：弹出打开文件选择框，选择 GGUF/bin/onnx 文件并返回路径与文件名"""
         if not self._window:
@@ -1983,8 +2065,10 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
             return {"status": "error", "message": str(e)}
 
     def import_drawing_models(self):
-        r"""一键导入 D:\AI\画图模型 目录下的 SD 模型文件"""
-        drawing_dir = r"D:\AI\画图模型"
+        """从配置的模型目录扫描导入 SD 模型文件"""
+        from config import load_all_configs
+        cfg = load_all_configs()
+        drawing_dir = cfg.get("drawing_model_dir", r"D:\AI\画图模型")
         if not os.path.isdir(drawing_dir):
             return {"status": "error", "message": f"画图模型目录不存在: {drawing_dir}"}
         models = []
@@ -2007,10 +2091,119 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
             return {"status": "error", "message": f"未在 {drawing_dir} 找到模型文件 (.safetensors/.ckpt/.pt/.bin)"}
         return {"status": "success", "models": models}
 
-    # ── ComfyUI 集成 ──
-    COMFYUI_DIR = r"D:\AI\ComfyUI_clean\ComfyUI_windows_portable"
-    COMFYUI_URL = "http://127.0.0.1:8188"
-    IMAGE_SAVE_DIR = r"F:\AI_Assistant_Images"
+    def set_comfyui_dir(self, path):
+        """Validate and save a ComfyUI installation or portable root."""
+        path = os.path.abspath(os.path.expanduser(str(path or "").strip()))
+        if not self._find_comfyui_root(path):
+            return {"status": "error", "message": "所选目录不是有效的 ComfyUI 安装目录（缺少 main.py）"}
+        from config import load_all_configs, save_all_configs
+        cfg = load_all_configs()
+        cfg["comfyui_dir"] = path
+        save_all_configs(cfg)
+        return {"status": "ok", "path": path}
+
+    def auto_detect_comfyui(self):
+        """Auto-detect and save ComfyUI dir"""
+        candidates = self._auto_detect_comfyui()
+        if not candidates:
+            return {"status": "error", "message": "No ComfyUI found"}
+        path = candidates[0]
+        self.set_comfyui_dir(path)
+        return {"status": "ok", "path": path, "candidates": candidates}
+
+    def get_comfyui_config(self):
+        """Get ComfyUI config + drawing model dir"""
+        from config import load_all_configs
+        cfg = load_all_configs()
+        path = self._get_comfyui_dir()
+        candidates = self._auto_detect_comfyui()
+        status = self.check_comfyui_status() if path else {"running": False}
+        drawing_model_dir = cfg.get("drawing_model_dir", r"D:\AI\画图模型")
+        return {
+            "path": path,
+            "status": status,
+            "candidates": candidates,
+            "drawing_model_dir": drawing_model_dir
+        }
+
+    def set_drawing_model_dir(self, path):
+        """Set drawing model scan directory"""
+        from config import load_all_configs, save_all_configs
+        cfg = load_all_configs()
+        cfg["drawing_model_dir"] = path
+        save_all_configs(cfg)
+        return {"status": "ok", "path": path}
+
+    def add_drawing_model_manual(self, file_path):
+        """Manually add a single model file"""
+        if not os.path.isfile(file_path):
+            return {"status": "error", "message": "File not found: " + file_path}
+        name, ext = os.path.splitext(os.path.basename(file_path))
+        if ext.lower() not in ('.safetensors', '.ckpt', '.pt', '.pth', '.bin', '.gguf', '.onnx'):
+            return {"status": "error", "message": "Unsupported format: " + ext}
+        size_gb = os.path.getsize(file_path) / (1024**3)
+        return {
+            "status": "success",
+            "model": {
+                "name": name,
+                "id": file_path.replace("\\", "/"),
+                "context": f"{size_gb:.1f}GB",
+                "type": "drawing"
+            }
+        }
+
+
+    def _get_comfyui_dir(self):
+        """Get ComfyUI dir from config; fallback to auto-detect"""
+        from config import load_all_configs
+        cfg = load_all_configs()
+        path = cfg.get("comfyui_dir", "")
+        if path and self._find_comfyui_root(path):
+            return os.path.abspath(os.path.expanduser(path))
+        detected = self._auto_detect_comfyui()
+        if detected:
+            return detected[0]
+        return ""
+
+    @staticmethod
+    def _auto_detect_comfyui():
+        """Fast auto-detect ComfyUI — scan common locations only"""
+        common_roots = [
+            "D:\\AI", "D:\\AI模型", "D:\\",
+            "C:\\AI", "C:\\",
+            "E:\\AI", "E:\\",
+        ]
+        candidates = []
+        for root in common_roots:
+            if not os.path.isdir(root):
+                continue
+            try:
+                entries = os.listdir(root)
+            except PermissionError:
+                continue
+            for entry in entries:
+                full = os.path.join(root, entry)
+                if not os.path.isdir(full):
+                    continue
+                # Portable: Xxx/ComfyUI_windows_portable/ComfyUI/main.py
+                if "ComfyUI" in entry and "portable" in entry.lower():
+                    mp = os.path.join(full, "ComfyUI", "main.py")
+                    if os.path.isfile(mp):
+                        candidates.append(full)
+                        continue
+                # Direct: Xxx/ComfyUI/main.py
+                if entry == "ComfyUI":
+                    mp = os.path.join(full, "main.py")
+                    if os.path.isfile(mp):
+                        candidates.append(full)
+        seen = set()
+        result = []
+        for p in candidates:
+            n = os.path.normpath(p)
+            if n not in seen:
+                seen.add(n)
+                result.append(p)
+        return result[:5]
 
     def check_comfyui_status(self):
         """检测 ComfyUI 是否在运行"""
@@ -2023,26 +2216,57 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
             print("[DRAW] ComfyUI status check failed:", str(e)[:100])
             return {"running": False}
 
-    def start_comfyui(self):
-        """启动 ComfyUI 进程"""
-        import subprocess, os
-        comfy_dir = os.path.join(self.COMFYUI_DIR, "ComfyUI")
-        main_py = os.path.join(comfy_dir, "main.py")
-        if not os.path.isfile(main_py):
-            return {"status": "error", "message": f"ComfyUI 未找到: {main_py}"}
-        python_exe = os.path.join(self.COMFYUI_DIR, "python_embeded", "python.exe")
-        if not os.path.isfile(python_exe):
-            python_exe = "python"
+    @staticmethod
+    def _find_comfyui_root(comfy_dir):
+        """Find actual ComfyUI root dir containing main.py"""
+        comfy_dir = os.path.abspath(os.path.expanduser(str(comfy_dir or "")))
+        if os.path.isfile(os.path.join(comfy_dir, "ComfyUI", "main.py")):
+            return os.path.join(comfy_dir, "ComfyUI")
+        if os.path.isfile(os.path.join(comfy_dir, "main.py")):
+            return comfy_dir
+        return ""
+
+    def _get_comfyui_python(self, installation_dir, comfy_root):
+        """Prefer the portable interpreter, then use the running application interpreter."""
+        candidates = [
+            os.path.join(installation_dir, "python_embeded", "python.exe"),
+            os.path.join(installation_dir, "python_embedded", "python.exe"),
+            os.path.join(os.path.dirname(comfy_root), "python_embeded", "python.exe"),
+            os.path.join(os.path.dirname(comfy_root), "python_embedded", "python.exe"),
+        ]
+        for python_exe in candidates:
+            if os.path.isfile(python_exe):
+                return python_exe
+        return sys.executable
+
+    def _start_comfyui_process(self):
+        if self.check_comfyui_status()["running"]:
+            return {"status": "already_running", "message": "ComfyUI 已在运行"}
+        if self._comfyui_process and self._comfyui_process.poll() is None:
+            return {"status": "starting", "message": "ComfyUI 正在启动"}
+
+        installation_dir = self._get_comfyui_dir()
+        comfy_root = self._find_comfyui_root(installation_dir)
+        if not comfy_root:
+            return {"status": "error", "message": "ComfyUI 目录未设置或缺少 main.py"}
+
         try:
             self._comfyui_process = subprocess.Popen(
-                [python_exe, main_py, "--listen", "127.0.0.1", "--port", "8188"],
-                cwd=comfy_dir,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                [self._get_comfyui_python(installation_dir, comfy_root), "main.py", "--listen", "127.0.0.1", "--port", "8188"],
+                cwd=comfy_root,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
-            return {"status": "ok", "message": "ComfyUI 正在启动，请稍候..."}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+            return {"status": "starting", "message": "ComfyUI 正在启动"}
+        except OSError as exc:
+            self._comfyui_process = None
+            return {"status": "error", "message": f"无法启动 ComfyUI: {exc}"}
+
+    def start_comfyui(self):
+        """启动 ComfyUI 进程"""
+        return self._start_comfyui_process()
 
 
     def start_drawing(self, prompt):
@@ -2057,19 +2281,8 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
             # Check ComfyUI
             if not self.check_comfyui_status()["running"]:
                 print("[DRAW] ComfyUI not running, trying auto-start...")
-                import subprocess
-                comfy_root = os.path.join(self.COMFYUI_DIR, "ComfyUI")
-                main_py = os.path.join(comfy_root, "main.py")
-                python_exe = os.path.join(self.COMFYUI_DIR, "python_embeded", "python.exe")
-                if not os.path.isfile(python_exe):
-                    python_exe = sys.executable
-                if os.path.isfile(main_py):
-                    self._comfyui_process = subprocess.Popen(
-                        [python_exe, main_py, "--listen", "127.0.0.1", "--port", "8188"],
-                        cwd=comfy_root,
-                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                    )
+                launch = self._start_comfyui_process()
+                if launch["status"] in {"starting", "already_running"}:
                     print("[DRAW] ComfyUI process started, waiting...")
                     for _ in range(60):
                         time.sleep(2)
@@ -2116,7 +2329,10 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
             
             if is_flux:
                 # Flux workflow: UNETLoader + DualCLIPLoader + VAELoader
-                comfy_models = os.path.join(self.COMFYUI_DIR, "ComfyUI", "models")
+                comfy_tmp = self._get_comfyui_dir()
+                comfy_models = os.path.join(comfy_tmp, "ComfyUI", "models")
+                if not os.path.isdir(comfy_models):
+                    comfy_models = os.path.join(comfy_tmp, "models")
                 clip_dir = os.path.join(comfy_models, "clip")
                 vae_dir = os.path.join(comfy_models, "vae")
                 

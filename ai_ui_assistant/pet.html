@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Desktop Pet</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: transparent !important;
+            user-select: none;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #pet-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #pet-image {
+            max-width: 90%;
+            max-height: 90%;
+            object-fit: contain;
+            filter: drop-shadow(0 10px 15px rgba(0,0,0,0.3));
+            animation: breathe 4s ease-in-out infinite;
+        }
+
+        /* 呼吸微动效 */
+        @keyframes breathe {
+            0% { transform: scale(1) translateY(0); }
+            50% { transform: scale(1.02) translateY(-5px); }
+            100% { transform: scale(1) translateY(0); }
+        }
+
+        .controls {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            z-index: 20;
+            display: flex;
+            gap: 5px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        body:hover .controls {
+            opacity: 1;
+        }
+        
+        .btn {
+            background: rgba(0,0,0,0.5);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            padding: 5px 10px;
+            cursor: pointer;
+            font-size: 12px;
+            backdrop-filter: blur(4px);
+        }
+        .btn:hover {
+            background: rgba(255, 105, 180, 0.8);
+        }
+    </style>
+</head>
+<body>
+    <div id="pet-container">
+        <img id="pet-image" src="assets/pet_image.png" alt="AI Pet">
+    </div>
+    
+    <div class="controls">
+        <button class="btn" onclick="savePosition()">📍 记忆位置</button>
+        <button class="btn" onclick="hidePet()">❌ 隐藏</button>
+    </div>
+
+    <script>
+        function hidePet() {
+            if (window.pywebview && window.pywebview.api) {
+                window.pywebview.api.toggle_pet_window(false);
+            }
+        }
+
+        function savePosition() {
+            if (window.pywebview && window.pywebview.api) {
+                window.pywebview.api.get_pet_window_rect().then((rect) => {
+                    if (rect) window.pywebview.api.save_pet_position(rect.x, rect.y);
+                });
+            }
+        }
+        
+        // Pointer dragging calls native SetWindowPos instead of Chromium's
+        // -webkit-app-region bridge, which avoids pywebview's None-size bug.
+        let dragState = null;
+        document.addEventListener('pointerdown', async (event) => {
+            if (event.button !== 0 || event.target.closest('.controls')) return;
+            if (!window.pywebview || !window.pywebview.api) return;
+            const rect = await window.pywebview.api.get_pet_window_rect();
+            if (!rect) return;
+            dragState = {
+                pointerId: event.pointerId,
+                startX: event.screenX,
+                startY: event.screenY,
+                windowX: rect.x,
+                windowY: rect.y,
+            };
+            if (document.body.setPointerCapture) document.body.setPointerCapture(event.pointerId);
+            event.preventDefault();
+        });
+        document.addEventListener('pointermove', (event) => {
+            if (!dragState || event.pointerId !== dragState.pointerId) return;
+            const x = dragState.windowX + event.screenX - dragState.startX;
+            const y = dragState.windowY + event.screenY - dragState.startY;
+            window.pywebview.api.move_pet_window(x, y);
+        });
+        document.addEventListener('pointerup', async (event) => {
+            if (!dragState || event.pointerId !== dragState.pointerId) return;
+            const rect = await window.pywebview.api.get_pet_window_rect();
+            if (rect) window.pywebview.api.save_pet_position(rect.x, rect.y);
+            dragState = null;
+        });
+
+        // 当鼠标按下时停止呼吸动画，释放时恢复
+        const petImg = document.getElementById('pet-image');
+        petImg.addEventListener('mousedown', () => {
+            petImg.style.animation = 'none';
+        });
+        document.addEventListener('mouseup', () => {
+            petImg.style.animation = 'breathe 4s ease-in-out infinite';
+        });
+    </script>
+</body>
+</html>

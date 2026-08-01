@@ -10,6 +10,7 @@ window.onerror = function(message, source, lineno, colno, error) {
 };
 
 window.chatHistory = []; window.isGenerating = false; window.modelList = []; window.presets = []; window.providers = {}; window.sessions = []; window.activeSessionId = "session_default"; window.modelLockMode = "free"; window.powershellMode = "normal"; window.attachedFile = null; window.fontSize = 13.5; window.deepThinkingEnabled = false; window.drawingEnabled = false; window.activeAssistantMsgElement = null; window.activeReasoningText = ""; window.activeContentText = "";
+window.desktopPetEnabled = false; window.desktopPetEnabledDirty = false;
 window.clipboardHistory = []; // 【新增】：前端剪贴板历史池
 
 window.addEventListener('pywebviewready', function () {
@@ -84,6 +85,14 @@ window.addEventListener('pywebviewready', function () {
                 if (floatWidthEl) floatWidthEl.value = String(floatWidth);
                 const floatWidthVal = document.getElementById('float-width-val');
                 if (floatWidthVal) floatWidthVal.textContent = floatWidth + 'px';
+
+                const initialPetEnabled = config.desktop_pet_enabled !== undefined ? config.desktop_pet_enabled : false;
+                window.desktopPetEnabled = !!initialPetEnabled;
+                window.desktopPetEnabledDirty = false;
+                const initialPetEnabledEl = document.getElementById('config-desktop-pet-enabled');
+                if (initialPetEnabledEl) initialPetEnabledEl.value = window.desktopPetEnabled ? "true" : "false";
+                const initialPetOnTopEl = document.getElementById('config-pet-on-top');
+                if (initialPetOnTopEl) initialPetOnTopEl.value = config.pet_on_top !== false ? "true" : "false";
 
                 // 【新增】：通用设置项加载
                 const activeZoom = config.zoom_level || "100%";
@@ -210,7 +219,7 @@ window.addEventListener('pywebviewready', function () {
 
                 // 启动后台定时系统状态监测
                 updateSystemStatsInPopover();
-                setInterval(updateSystemStatsInPopover, 3500);
+                // setInterval(updateSystemStatsInPopover, 3500);
 
                 // 【修改】：安全延迟启动剪贴板历史监测线程，并读取历史
                 window.pywebview.api.start_clipboard_monitor().then(function () {
@@ -219,6 +228,15 @@ window.addEventListener('pywebviewready', function () {
                         renderClipboardList();
                     });
                 });
+
+                // 隐藏启动动画
+                setTimeout(() => {
+                    const loader = document.getElementById('startup-loader');
+                    if (loader) {
+                        loader.style.opacity = '0';
+                        setTimeout(() => { loader.style.display = 'none'; }, 500);
+                    }
+                }, 300);
             } catch (innerErr) {
                 alert("JS初始化配置解析故障: " + innerErr.stack);
                 if (window.pywebview && window.pywebview.api && window.pywebview.api.log_js_error) {
@@ -339,8 +357,17 @@ function bindEventListeners() {
     if (checkUpdateBtn) checkUpdateBtn.addEventListener('click', checkForUpdates);
 
     // 【新增】：保存配置按鈕
+    const petEnabledEl = document.getElementById('config-desktop-pet-enabled');
+    if (petEnabledEl) petEnabledEl.addEventListener('change', function() {
+        window.desktopPetEnabled = this.value === "true";
+        window.desktopPetEnabledDirty = true;
+        saveSettingsSilent();
+    });
+
     const saveBtn = document.getElementById('btn-save-settings');
     if (saveBtn) saveBtn.addEventListener('click', saveSettings);
+    const exitBtn = document.getElementById('btn-exit-app');
+    if (exitBtn) exitBtn.addEventListener('click', showCloseConfirmModal);
 
     // 【新增】：功能 30-39 事件绑定
     const quotaRefreshBtn = document.getElementById('btn-refresh-quota-now');
@@ -425,6 +452,16 @@ function bindEventListeners() {
             }
         });
     }
+    const petOnTopEl = document.getElementById('config-pet-on-top');
+    if (petOnTopEl) {
+        petOnTopEl.addEventListener('change', function() {
+            const onTop = this.value === 'true';
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.set_pet_on_top_api) {
+                window.pywebview.api.set_pet_on_top_api(onTop);
+            }
+        });
+    }
+
     const mainAppPathEl = document.getElementById('config-main-app-path');
     if (mainAppPathEl) mainAppPathEl.addEventListener('blur', saveSettingsSilent);
     const customLinkedAppEl = document.getElementById('config-custom-linked-app');
@@ -514,8 +551,15 @@ function bindEventListeners() {
     document.getElementById('dash-overlay').addEventListener('click', closeAllDrawers);
     document.getElementById('dock-btn-sessions').addEventListener('click', toggleSessionsDrawer);
     document.getElementById('dock-btn-settings').addEventListener('click', toggleDashboard);
-    document.getElementById('dock-status-orb').addEventListener('click', toggleStatusPopover);
+    // dock-status-orb removed
 }
+
+window.syncPetEnabledUI = function(enabled) {
+    window.desktopPetEnabled = !!enabled;
+    window.desktopPetEnabledDirty = false;
+    const el = document.getElementById('config-desktop-pet-enabled');
+    if (el) el.value = window.desktopPetEnabled ? "true" : "false";
+};
 
 window.syncFloatingDialogueEnabledUI = function(enabled) {
     const el = document.getElementById('config-floating-dialogue-enabled');
@@ -575,6 +619,15 @@ window.reloadConfigUI = function() {
             const activeAutostart = config.autostart || "disabled";
             const autostartEl = document.getElementById('config-autostart');
             if (autostartEl) autostartEl.value = activeAutostart;
+
+            const petEnabled = config.desktop_pet_enabled !== undefined ? config.desktop_pet_enabled : false;
+            const petEnabledEl = document.getElementById('config-desktop-pet-enabled');
+            window.desktopPetEnabled = petEnabled; window.desktopPetEnabledDirty = false;
+            if (petEnabledEl) petEnabledEl.value = petEnabled ? "true" : "false";
+
+            const petOnTop = config.pet_on_top !== undefined ? config.pet_on_top : true;
+            const petOnTopEl = document.getElementById('config-pet-on-top');
+            if (petOnTopEl) petOnTopEl.value = petOnTop ? "true" : "false";
         });
     }
 };
@@ -810,7 +863,7 @@ function loadSessionChatHistory() {
     const activeSession = window.sessions.find(s => s.id === window.activeSessionId);
     if (!activeSession) return;
     if (activeSession.history.length === 0) {
-        container.innerHTML = `<div class="bubble-wrap"><div class="avatar ai">AI</div><div class="bubble-content">这是一个全新的独立会话窗口。请随时在下方提问。</div></div>`;
+        container.innerHTML = `<div class="empty-session-placeholder" style="text-align: center; color: #fb7185; margin-top: 40px; font-weight: bold; font-size: 16px; opacity: 0.8; animation: pulse 2s infinite;">🐾 喵~ 我是星喵，已经准备好为你服务啦！</div>`;
         return;
     }
     activeSession.history.forEach((msg, idx) => {
@@ -1188,6 +1241,8 @@ function saveSettings() {
         floating_dialogue_height: parseInt(document.getElementById('config-floating-dialogue-height').value) || 450,
         floating_dialogue_width: parseInt(document.getElementById('config-floating-dialogue-width').value) || 380,
         floating_dialogue_max_width: 800,
+        ...(window.desktopPetEnabledDirty ? { desktop_pet_enabled: window.desktopPetEnabled, _desktop_pet_enabled_dirty: true } : {}),
+        pet_on_top: (document.getElementById('config-pet-on-top') || {}).value === 'true',
         custom_scripts: window.customScripts || [],
         web_search_enabled: window.webSearchEnabled,
         models: window.modelList,
@@ -1294,6 +1349,8 @@ function saveSettingsSilent() {
         floating_dialogue_height: parseInt(document.getElementById('config-floating-dialogue-height').value) || 450,
         floating_dialogue_width: parseInt(document.getElementById('config-floating-dialogue-width').value) || 380,
         floating_dialogue_max_width: 800,
+        ...(window.desktopPetEnabledDirty ? { desktop_pet_enabled: window.desktopPetEnabled, _desktop_pet_enabled_dirty: true } : {}),
+        pet_on_top: (document.getElementById('config-pet-on-top') || {}).value === 'true',
         custom_scripts: window.customScripts || [],
         web_search_enabled: window.webSearchEnabled,
         models: window.modelList,
@@ -1757,7 +1814,11 @@ function cancelGeneration() {
 function appendUserBubble(text) {
     const container = document.getElementById('chat-container');
     const activeSession = window.sessions.find(s => s.id === window.activeSessionId);
-    if (activeSession) { activeSession.history.push({ role: "user", content: text }); saveSettingsSilent(); }
+    if (activeSession) { activeSession.history.push({ role: "user", content: text }); saveSettingsSilent();
+    if (activeSession.history.length === 1 && activeSession.title.includes("新会话")) {
+        autoTitleWorker(activeSession.id, text);
+    }
+    }
     const userMsgIdx = activeSession ? activeSession.history.length - 1 : -1;
     const wrap = document.createElement('div'); wrap.className = "bubble-wrap user";
     wrap.innerHTML = `<div class="avatar user">ME</div><div class="bubble-content">${escapeHTML(text)}<div class="bubble-actions"><button onclick="loadToInput(this)" class="btn-bubble-action">✏️ 载入编辑</button><button onclick="deleteMessagePair(${userMsgIdx})" class="btn-bubble-action btn-bubble-delete">🗑️ 删除对话</button></div></div>`;
@@ -1779,10 +1840,26 @@ window.handleFloatUserMessage = function(text) {
     window.generationStartTime = performance.now();
 };
 
+
+const AI_PERSONAS = {
+    'deepseek': { icon: '🐳', accent: '#1d4ed8' },
+    'kimi': { icon: '🌙', accent: '#3b82f6' },
+    'gpt': { icon: '🌿', accent: '#10a37f' },
+    'ollama': { icon: '🦙', accent: '#f43f5e' },
+    'default': { icon: '🐾', accent: '#fb7185' }
+};
+function getModelPersona() {
+    const activeModelId = document.getElementById('config-active-model').value.toLowerCase();
+    const provider = document.getElementById('config-provider').value.toLowerCase();
+    const key = Object.keys(AI_PERSONAS).find(k => activeModelId.includes(k) || provider.includes(k)) || 'default';
+    return AI_PERSONAS[key];
+}
+
 function createAssistantBubble() {
+    const persona = getModelPersona();
     const container = document.getElementById('chat-container');
     const wrap = document.createElement('div'); wrap.className = "bubble-wrap";
-    wrap.innerHTML = `<div class="avatar ai">AI</div><div class="bubble-content" style="width: 100%;"><div id="active-reasoning-box"><details open><summary id="active-reasoning-summary">🤔 思考中...</summary><div id="active-reasoning-content" style="white-space: pre-wrap;"></div></details></div><div id="active-body-content"><div class="typing-indicator"><span></span><span></span><span></span></div></div></div>`;
+    wrap.innerHTML = `<div class="avatar ai" style="background:${persona.accent};">${persona.icon}</div><div class="bubble-content" style="width: 100%;"><div id="active-reasoning-box"><details open><summary id="active-reasoning-summary">🐾 星喵思考中...</summary><div id="active-reasoning-content" style="white-space: pre-wrap;"></div></details></div><div id="active-body-content"><div class="typing-indicator"><span></span><span></span><span></span></div></div></div>`;
     container.appendChild(wrap); scrollToBottom(true); return wrap;
 }
 
@@ -2092,7 +2169,9 @@ function triggerDrawing() {
     if (window.isGenerating) return;
     if (!checkModelSupportsDrawing()) {
         const activeModelId = document.getElementById('config-active-model').value || "未选定模型";
-        alert("⚠️ 当前选定模型 [" + activeModelId + "] 不支持绘图功能！请在右侧设置中切换为绘图大模型（如 Kimi-CogView-3 或 DALL-E-3）。");
+        showCustomDialog('⚠️ 绘图支持提示', "当前选定模型 [" + activeModelId + "] 不支持绘图功能！<br><br>请在右侧设置中切换为绘图大模型（如 Kimi-CogView-3 或 DALL-E-3）。", [
+            { text: '我知道了', primary: true, onClick: () => {} }
+        ]);
         return;
     }
     
@@ -2282,6 +2361,21 @@ function updateStatusOrb(status) {
     const dockOrb = document.getElementById('dock-status-orb');
     if (orb) orb.className = "status-orb " + status;
     if (dockOrb) dockOrb.className = "status-orb " + status;
+    
+    // 同步更新桌宠的状态与动画
+    const pet = document.getElementById('pet-character');
+    if (pet) {
+        if (status === "thinking") {
+            pet.className = "pet-thinking";
+            pet.innerHTML = "🐾💭";
+        } else if (status === "generating") {
+            pet.className = "pet-typing";
+            pet.innerHTML = "🐾✨";
+        } else {
+            pet.className = "pet-idle";
+            pet.innerHTML = "🐾";
+        }
+    }
 }
 
 function exportChatLog() {
@@ -2336,7 +2430,7 @@ function updateHardwareRing(ringId, percent, maxCircumference) {
     } else if (percent > 50) {
         strokeColor = "#eab308"; // yellow
     }
-    el.style.stroke = strokeColor;
+    el.style.setProperty('stroke', strokeColor, 'important');
 }
 
 function updateSystemStatsInPopover() {
@@ -4414,3 +4508,120 @@ window.sortExecutePlan = function () {
         });
     }
 };
+
+
+function autoTitleWorker(sessId, firstMsg) {
+    if (!window.pywebview || !window.pywebview.api) return;
+    const prompt = `你是一个极简主义的标题提取器。请将以下用户的发言浓缩为一个 3 到 6 个字的精炼标题。禁止使用任何标点符号、解释性语句或前缀。直接输出内容即可。用户发言：${firstMsg}`;
+    window.pywebview.api.silent_llm_request(prompt).then(title => {
+        if (title) {
+            const session = window.sessions.find(s => s.id === sessId);
+            if (session) {
+                session.title = title.trim();
+                renderSessionList();
+                saveSettingsSilent();
+            }
+        }
+    }).catch(e => console.log('Auto title failed:', e));
+}
+
+// Cat Paw Click Effect
+document.addEventListener('click', function(e) {
+    const paw = document.createElement('div');
+    paw.className = 'cat-paw-effect';
+    paw.style.left = e.clientX + 'px';
+    paw.style.top = e.clientY + 'px';
+    document.body.appendChild(paw);
+    setTimeout(() => paw.remove(), 800);
+});
+
+// Global Custom Dialog Logic
+window.showCustomDialog = function(title, message, buttons) {
+    const overlay = document.getElementById('sakura-dialog-overlay');
+    const titleEl = document.getElementById('sakura-dialog-title');
+    const contentEl = document.getElementById('sakura-dialog-content');
+    const buttonsEl = document.getElementById('sakura-dialog-buttons');
+    
+    titleEl.innerHTML = title;
+    contentEl.innerHTML = message;
+    buttonsEl.innerHTML = '';
+    
+    buttons.forEach(btn => {
+        const btnEl = document.createElement('button');
+        btnEl.innerText = btn.text;
+        btnEl.style.padding = '8px 16px';
+        btnEl.style.border = 'none';
+        btnEl.style.borderRadius = '8px';
+        btnEl.style.cursor = 'pointer';
+        btnEl.style.fontWeight = 'bold';
+        btnEl.style.transition = 'all 0.2s';
+        
+        if (btn.primary) {
+            btnEl.style.background = 'var(--accent-color)';
+            btnEl.style.color = '#fff';
+            btnEl.onmouseover = () => btnEl.style.background = 'var(--accent-hover)';
+            btnEl.onmouseout = () => btnEl.style.background = 'var(--accent-color)';
+        } else {
+            btnEl.style.background = 'rgba(200, 200, 200, 0.4)';
+            btnEl.style.color = 'var(--text-color)';
+            btnEl.onmouseover = () => btnEl.style.background = 'rgba(200, 200, 200, 0.6)';
+            btnEl.onmouseout = () => btnEl.style.background = 'rgba(200, 200, 200, 0.4)';
+        }
+        
+        btnEl.onclick = () => {
+            overlay.style.display = 'none';
+            if (btn.onClick) btn.onClick();
+        };
+        buttonsEl.appendChild(btnEl);
+    });
+    
+    overlay.style.display = 'flex';
+};
+
+window.showExitConfirmModal = function() {
+    showCloseConfirmModal();
+};
+
+
+// --- 星喵互动情绪球 (Easter Egg) ---
+document.addEventListener('DOMContentLoaded', () => {
+    const orb = document.getElementById('dock-status-orb');
+    if (orb) {
+        orb.addEventListener('click', function(e) {
+            // Click animation
+            this.style.transform = 'scale(0.7)';
+            setTimeout(() => this.style.transform = 'scale(1)', 150);
+
+            const meows = ["喵~", "喵呜!", "呼噜噜~", "🐾", "💖", "✨", "🐟", "干饭!"];
+            const text = meows[Math.floor(Math.random() * meows.length)];
+            
+            const floatEl = document.createElement('div');
+            floatEl.textContent = text;
+            floatEl.style.position = 'fixed';
+            floatEl.style.left = (e.clientX - 10) + 'px';
+            floatEl.style.top = (e.clientY - 15) + 'px';
+            floatEl.style.color = '#a855f7';
+            floatEl.style.fontWeight = 'bold';
+            floatEl.style.fontSize = '12px';
+            floatEl.style.pointerEvents = 'none';
+            floatEl.style.zIndex = '99999';
+            floatEl.style.transition = 'all 1s ease-out';
+            floatEl.style.textShadow = '0 2px 4px rgba(0,0,0,0.3)';
+            
+            document.body.appendChild(floatEl);
+            
+            // Force reflow
+            floatEl.getBoundingClientRect();
+            
+            // Random float trajectory
+            floatEl.style.transform = `translate(${Math.random() * 40 - 20}px, -${Math.random() * 40 + 50}px) scale(1.3)`;
+            floatEl.style.opacity = '0';
+            
+            setTimeout(() => {
+                if (floatEl.parentNode) {
+                    floatEl.parentNode.removeChild(floatEl);
+                }
+            }, 1000);
+        });
+    }
+});
