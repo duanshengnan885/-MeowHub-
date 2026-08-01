@@ -59,7 +59,7 @@ AI 驱动的桌面工作站助手，基于 Python + WebView 构建。支持多�
 
 ```bash
 # 克隆仓库
-git clone https://github.com/duanshengnan885/ai-assistant.git
+git clone https://github.com/duanshengnan885/-MeowHub-.git
 cd 星喵(MeowHub)
 
 # 创建虚拟环境

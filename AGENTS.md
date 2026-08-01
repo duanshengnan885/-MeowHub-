@@ -3,7 +3,7 @@
 ## 项目名称
 - **正式名称**：星喵 (MeowHub)
 - **文件夹名**：`星喵(MeowHub)`（位于 `d:\个人项目\星喵(MeowHub)`）
-- **GitHub Repo**：`duanshengnan885/ai-assistant`
+- **GitHub Repo**：`duanshengnan885/-MeowHub-`
 - **描述**：AI 驱动的桌面工作站助手，带虚拟宠物、多模型对话、智能文件整理等功能
 
 > **规则**：在所有对话、文档、注释、提交信息中，统一使用「星喵 (MeowHub)」作为项目名称，禁止使用 "AI Desktop Assistant" 或 "ai_assistant"。
