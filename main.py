@@ -95,9 +95,9 @@ def check_single_instance():
             # 尝试寻找并唤醒主窗口
             hwnd = AppAPI._find_window_hwnd("星喵 (MeowHub)")
             if not hwnd:
-                hwnd = AppAPI._find_window_hwnd("AI Desktop Workstation Cockpit")
+                hwnd = AppAPI._find_window_hwnd("星喵 (MeowHub)")
                 if not hwnd:
-                    hwnd = AppAPI._find_window_hwnd("AI Desktop Assistant")
+                    hwnd = AppAPI._find_window_hwnd("MeowHub")
             if hwnd:
                 # 9 = SW_RESTORE, 5 = SW_SHOW
                 user32.ShowWindow(hwnd, 9)
@@ -265,7 +265,7 @@ def setup_tray_icon(api_instance):
             pystray.MenuItem("💤 让星喵休息 (退出)", on_exit)
         )
         
-        icon = pystray.Icon("AI_Assistant", image, "星喵 (MeowHub)", menu)
+        icon = pystray.Icon("MeowHub", image, "星喵 (MeowHub)", menu)
         api_instance.set_tray_icon(icon)
         icon.run()
         api_instance.set_tray_icon(None)
@@ -275,11 +275,11 @@ def setup_tray_icon(api_instance):
 
 if __name__ == "__main__":
     set_windows_app_user_model_id()
-    # === Auto-backup project to F:\AI_Assistant_Backups ===
+    # === Auto-backup project to F:\MeowHub_Backups ===
     import shutil
     from datetime import datetime
     try:
-        backup_root = r"F:\AI_Assistant_Backups"
+        backup_root = r"F:\MeowHub_Backups"
         project_dir = os.path.dirname(os.path.abspath(__file__))
         project_name = os.path.basename(project_dir)
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
@@ -395,7 +395,7 @@ if __name__ == "__main__":
     pet_url = "file:///" + os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_ui_assistant", "pet.html").replace('\\', '/')
     
     pet_window = webview.create_window(
-        title="AI Desktop Pet",
+        title="星喵桌宠",
         url=pet_url,
         js_api=pet_api,
         width=pet_width,
@@ -470,7 +470,7 @@ if __name__ == "__main__":
                 if not hwnd:
                     user32 = ctypes.windll.user32
                     user32.FindWindowW.restype = ctypes.c_void_p
-                    hwnd = AppAPI._find_window_hwnd("AI Desktop Pet")
+                    hwnd = AppAPI._find_window_hwnd("星喵桌宠")
                 if hwnd:
                     api.register_pet_hwnd(hwnd)
                     pet_api.register_pet_hwnd(hwnd)
@@ -596,9 +596,9 @@ if __name__ == "__main__":
                     user32.FindWindowW.restype = ctypes.c_void_p
                     hwnd = AppAPI._find_window_hwnd("星喵 (MeowHub)")
                     if not hwnd:
-                        hwnd = AppAPI._find_window_hwnd("AI Desktop Workstation Cockpit")
+                        hwnd = AppAPI._find_window_hwnd("星喵 (MeowHub)")
                     if not hwnd:
-                        hwnd = AppAPI._find_window_hwnd("AI Desktop Assistant")
+                        hwnd = AppAPI._find_window_hwnd("MeowHub")
                 if hwnd:
                     api.register_main_hwnd(hwnd)
                     float_api.register_main_hwnd(hwnd)

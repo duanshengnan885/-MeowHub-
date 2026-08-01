@@ -1,6 +1,6 @@
 import os
 
-file_path = r'd:\个人项目\ai_assistant\ai_ui_assistant\app.js'
+file_path = r'd:\个人项目\星喵 (MeowHub)\ai_ui_assistant\app.js'
 with open(file_path, 'r', encoding='utf-8', errors='surrogateescape') as f:
     content = f.read()
 

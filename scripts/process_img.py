@@ -4,7 +4,7 @@ import sys
 import os
 
 img_path = r"C:\Users\ikun\.gemini\antigravity-ide\brain\589b0e4d-152f-4009-88d4-ef1cd4e910ee\media__1785599447595.jpg"
-out_dir = r"d:\个人项目\ai_assistant\ai_ui_assistant\assets"
+out_dir = r"d:\个人项目\星喵 (MeowHub)\ai_ui_assistant\assets"
 os.makedirs(out_dir, exist_ok=True)
 out_path = os.path.join(out_dir, "pet_image.png")
 

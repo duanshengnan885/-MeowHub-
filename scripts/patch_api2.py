@@ -1,6 +1,6 @@
 import os
 
-file_path = r"d:\个人项目\ai_assistant\api.py"
+file_path = r"d:\个人项目\星喵 (MeowHub)\api.py"
 with open(file_path, 'r', encoding='utf-8') as f:
     lines = f.readlines()
 

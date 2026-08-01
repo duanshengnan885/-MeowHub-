@@ -22,7 +22,7 @@ window.addEventListener('pywebviewready', function () {
                 document.body.classList.add('float-mode');
                 initFloatMode();
             } else {
-                document.title = "AI Desktop Workstation Cockpit";
+                document.title = "星喵 (MeowHub)";
                 window.pywebview.api.get_config().then(function (config) {
             try {
                 document.getElementById('config-provider').value = config.provider;
@@ -1387,7 +1387,7 @@ function testWindowsToast() {
     const btn = document.getElementById('btn-test-toast');
     if (btn) { btn.disabled = true; }
     window.pywebview.api.send_windows_toast(
-        'AI Desktop Workstation',
+        '星喵 (MeowHub)',
         '🔔 测试通知: 系统弹窗功能正常工作!'
     ).then(function(res) {
         if (btn) { btn.disabled = false; }

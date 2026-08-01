@@ -79,9 +79,9 @@ Windows 用户也可直接双击 `run_win.bat`，macOS 双击 `run_mac.command`�
 ### 打包为 EXE
 
 ```bash
-pyinstaller AI_Assistant.spec
+pyinstaller MeowHub.spec
 ```
-输出在 `dist/AI_Assistant/` 目录。
+输出在 `dist/MeowHub/` 目录。
 
 ## ⚙️ 配置
 
@@ -113,7 +113,7 @@ pyinstaller AI_Assistant.spec
 │   ├── float.html       # 悬浮窗前端界面
 │   ├── app.js           # 主程序与动画逻辑
 │   └── style.css        # 全新萌系/磨砂主题样式
-├── AI_Assistant.spec    # PyInstaller 打包配置
+├── MeowHub.spec         # PyInstaller 打包配置
 ├── run_win.bat          # Windows 快速一键启动
 └── run_mac.command      # macOS 快速一键启动
 ```

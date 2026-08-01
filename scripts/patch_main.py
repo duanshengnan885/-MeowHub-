@@ -1,6 +1,6 @@
 import os
 
-file_path = r"d:\个人项目\ai_assistant\main.py"
+file_path = r"d:\个人项目\星喵 (MeowHub)\main.py"
 with open(file_path, 'r', encoding='utf-8') as f:
     content = f.read()
 

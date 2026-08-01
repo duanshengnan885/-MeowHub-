@@ -27,5 +27,5 @@ for y in range(h):
 if max_x >= min_x and max_y >= min_y:
     img = img.crop((min_x, min_y, max_x, max_y))
 
-img.save(r"d:\个人项目\ai_assistant\paw.png")
+img.save(r"d:\个人项目\星喵 (MeowHub)\paw.png")
 print("Paw processed with pure Pillow and saved successfully!")

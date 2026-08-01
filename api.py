@@ -132,9 +132,9 @@ class AppAPI:
         if sys.platform == "win32":
             hwnd_main = AppAPI._main_hwnd
             if not hwnd_main:
-                hwnd_main = AppAPI._find_window_hwnd("AI Desktop Workstation Cockpit")
+                hwnd_main = AppAPI._find_window_hwnd("星喵 (MeowHub)")
             if not hwnd_main:
-                hwnd_main = AppAPI._find_window_hwnd("AI Desktop Assistant")
+                hwnd_main = AppAPI._find_window_hwnd("MeowHub")
             if hwnd_main:
                 user32 = ctypes.windll.user32
                 user32.ShowWindow(hwnd_main, 9)   # SW_RESTORE
@@ -580,9 +580,9 @@ class AppAPI:
     def _get_window_hwnd(self, kind):
         """Resolve a pywebview HWND from the native handle or a known title."""
         candidates = {
-            "main": (AppAPI._main_hwnd, ("星喵 (MeowHub)", "AI Desktop Workstation Cockpit", "AI Desktop Assistant")),
+            "main": (AppAPI._main_hwnd, ("星喵 (MeowHub)", "MeowHub")),
             "float": (AppAPI._float_hwnd, ("AI Float Dialogue",)),
-            "pet": (AppAPI._pet_hwnd, ("AI Desktop Pet",)),
+            "pet": (AppAPI._pet_hwnd, ("星喵桌宠",)),
         }
         hwnd, titles = candidates[kind]
         if hwnd:
@@ -664,7 +664,7 @@ class AppAPI:
         if sys.platform == "win32":
             try:
                 user32 = ctypes.windll.user32
-                hwnd = AppAPI._pet_hwnd or AppAPI._find_window_hwnd("AI Desktop Pet")
+                hwnd = AppAPI._pet_hwnd or AppAPI._find_window_hwnd("星喵桌宠")
                 if hwnd:
                     class RECT(ctypes.Structure):
                         _fields_ = [
@@ -802,7 +802,7 @@ class AppAPI:
         """Move the live WebView2 window without hiding its renderer."""
         hwnd = AppAPI._pet_hwnd
         if sys.platform == "win32" and not hwnd:
-            hwnd = AppAPI._find_window_hwnd("AI Desktop Pet")
+            hwnd = AppAPI._find_window_hwnd("星喵桌宠")
             if hwnd:
                 AppAPI._pet_hwnd = hwnd
         scale = self._pet_window_scale(hwnd) if logical else 1.0
@@ -1901,7 +1901,7 @@ class AppAPI:
         try:
             import winreg
             key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-            app_name = "AI Desktop Workstation"
+            app_name = "星喵 (MeowHub)"
             exe_path = os.path.abspath(sys.executable)
             # 尝试定位 pythonw.exe 替换 python.exe 以实现无黑框静默后台启动
             exe_dir = os.path.dirname(exe_path)
@@ -1954,7 +1954,7 @@ $template = @"
 $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
 $xml.LoadXml($template)
 $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('AI Desktop Workstation').Show($toast)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('星喵 (MeowHub)').Show($toast)
 """
             subprocess.Popen(
                 ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
@@ -2362,7 +2362,7 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
                     "16": {"class_type": "EmptyFlux2LatentImage", "inputs": {"width": 1024, "height": 1024, "batch_size": 1}},
                     "17": {"class_type": "KSampler", "inputs": {"seed": seed, "steps": 20, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0, "model": ["11", 0], "positive": ["14", 0], "negative": ["15", 0], "latent_image": ["16", 0]}},
                     "18": {"class_type": "VAEDecode", "inputs": {"samples": ["17", 0], "vae": ["13", 0]}},
-                    "19": {"class_type": "SaveImage", "inputs": {"filename_prefix": "ai_assistant", "images": ["18", 0]}}
+                    "19": {"class_type": "SaveImage", "inputs": {"filename_prefix": "meowhub", "images": ["18", 0]}}
                 }
             else:
                 wf = {
@@ -2372,7 +2372,7 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
                     "6": {"class_type": "EmptyLatentImage", "inputs": {"width": 1024, "height": 1024, "batch_size": 1}},
                     "7": {"class_type": "KSampler", "inputs": {"seed": seed, "steps": 30, "cfg": 7.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0, "model": ["3", 0], "positive": ["4", 0], "negative": ["5", 0], "latent_image": ["6", 0]}},
                     "8": {"class_type": "VAEDecode", "inputs": {"samples": ["7", 0], "vae": ["3", 2]}},
-                    "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "ai_assistant", "images": ["8", 0]}}
+                    "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "meowhub", "images": ["8", 0]}}
                 }
             
             # Submit to ComfyUI
