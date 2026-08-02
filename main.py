@@ -275,41 +275,7 @@ def setup_tray_icon(api_instance):
 
 if __name__ == "__main__":
     set_windows_app_user_model_id()
-    # === Auto-backup project to F:\MeowHub_Backups ===
-    import shutil
-    from datetime import datetime
-    try:
-        backup_root = r"F:\MeowHub_Backups"
-        project_dir = os.path.dirname(os.path.abspath(__file__))
-        project_name = os.path.basename(project_dir)
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        backup_dest = os.path.join(backup_root, f"{project_name}_{timestamp}")
-        os.makedirs(backup_root, exist_ok=True)
-        shutil.copytree(
-            project_dir, backup_dest,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".venv", "build", "dist", ".git", "node_modules"),
-            dirs_exist_ok=True
-        )
-        print(f"[Backup] Project backed up to: {backup_dest}")
-        
-        # Keep only the last 10 backups
-        existing_backups = []
-        for d in os.listdir(backup_root):
-            if d.startswith(f"{project_name}_"):
-                full_path = os.path.join(backup_root, d)
-                if os.path.isdir(full_path):
-                    existing_backups.append(full_path)
-        existing_backups.sort()
-        if len(existing_backups) > 10:
-            for old_backup in existing_backups[:-10]:
-                try:
-                    shutil.rmtree(old_backup)
-                    print(f"[Backup] Deleted old backup: {old_backup}")
-                except Exception as ex:
-                    print(f"[Backup] Warning: Failed to delete old backup {old_backup}: {ex}")
-    except Exception as e:
-        print(f"[Backup] Warning: Failed to backup: {e}")
-    # === End auto-backup ===
+
 
     if not check_single_instance():
         print("[Info] 检测到已有实例正在后台运行，已将其唤醒，当前进程干净退出。")

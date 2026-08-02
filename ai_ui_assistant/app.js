@@ -11,7 +11,48 @@ window.onerror = function(message, source, lineno, colno, error) {
 
 window.chatHistory = []; window.isGenerating = false; window.modelList = []; window.presets = []; window.providers = {}; window.sessions = []; window.activeSessionId = "session_default"; window.modelLockMode = "free"; window.powershellMode = "normal"; window.attachedFile = null; window.fontSize = 13.5; window.deepThinkingEnabled = false; window.drawingEnabled = false; window.activeAssistantMsgElement = null; window.activeReasoningText = ""; window.activeContentText = "";
 window.desktopPetEnabled = false; window.desktopPetEnabledDirty = false;
-window.clipboardHistory = []; // 【新增】：前端剪贴板历史池
+window.clipboardHistory = [];
+
+window.getAIAvatarHtml = function(overrideModel) {
+    let model = overrideModel || "";
+    if (!model) {
+        let s = window.sessions.find(x => x.id === window.activeSessionId);
+        if (s && s.bound_model) {
+            model = s.bound_model;
+        } else {
+            let sel = document.getElementById('config-active-model');
+            if (sel && sel.value) model = sel.value;
+        }
+    }
+    
+    let domain = "";
+    let m = model.toLowerCase();
+    
+    if (m.includes("deepseek")) domain = "deepseek.com";
+    else if (m.includes("moonshot") || m.includes("kimi")) domain = "kimi.moonshot.cn";
+    else if (m.includes("openai") || m.includes("gpt") || m.includes("dall")) domain = "openai.com";
+    else if (m.includes("anthropic") || m.includes("claude")) domain = "anthropic.com";
+    else if (m.includes("google") || m.includes("gemini")) domain = "google.com";
+    else if (m.includes("ollama") || m.includes("qwen") || m.includes("llama")) domain = "ollama.com";
+    else if (m.includes("xai") || m.includes("grok")) domain = "x.ai";
+    else if (m.includes("zhipu") || m.includes("glm")) domain = "zhipuai.cn";
+    else if (m.includes("doubao")) domain = "doubao.com";
+    else if (m.includes("siliconflow")) domain = "siliconflow.cn";
+    else if (m.includes("stepfun")) domain = "stepfun.com";
+    else if (m.includes("baichuan")) domain = "baichuan-ai.com";
+    else if (m.includes("minimax")) domain = "minimaxi.com";
+    else if (m.includes("01")) domain = "01.ai";
+    else if (m.includes("ali") || m.includes("tongyi")) domain = "aliyun.com";
+    else if (m.includes("baidu") || m.includes("ernie")) domain = "baidu.com";
+    else if (m.includes("tencent") || m.includes("hunyuan")) domain = "tencent.com";
+    
+    if (domain) {
+        let url = `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
+        return `<div class="avatar ai" style="background: url('${url}') center/cover no-repeat; color: transparent; overflow: hidden; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">AI</div>`;
+    }
+    return `${window.getAIAvatarHtml()}`;
+};
+ // 【新增】：前端剪贴板历史池
 
 window.addEventListener('pywebviewready', function () {
     try {
@@ -894,7 +935,7 @@ function loadSessionChatHistory() {
             if (msg.image_url) {
                 imageHtml = '<div style="margin-bottom:8px;"><img src="' + msg.image_url + '" style="max-width:100%;border-radius:12px;" onerror="this.style.display=\'none\'"></div>';
             }
-            wrap.innerHTML = `<div class="avatar ai">AI</div><div class="bubble-content" style="width: 100%;">${imageHtml}${blockHtml}<div class="markdown-body">${parseMarkdownWithCopy(bodyText)}</div><div class="bubble-actions"><button onclick="copyBubbleText(this)" class="btn-bubble-action">📋 复制全文</button><button onclick="importToSandbox(${idx})" class="btn-bubble-action">📥 导入至沙盒</button><button onclick="importToSandboxDiff(${idx})" class="btn-bubble-action">💡 对比导入</button><button onclick="replayBubbleVoice(this)" class="btn-bubble-action btn-bubble-voice">🔊 听语音</button></div></div>`;
+            wrap.innerHTML = `${window.getAIAvatarHtml()}<div class="bubble-content" style="width: 100%;">${imageHtml}${blockHtml}<div class="markdown-body">${parseMarkdownWithCopy(bodyText)}</div><div class="bubble-actions"><button onclick="copyBubbleText(this)" class="btn-bubble-action">📋 复制全文</button><button onclick="importToSandbox(${idx})" class="btn-bubble-action">📥 导入至沙盒</button><button onclick="importToSandboxDiff(${idx})" class="btn-bubble-action">💡 对比导入</button><button onclick="replayBubbleVoice(this)" class="btn-bubble-action btn-bubble-voice">🔊 听语音</button></div></div>`;
         }
         container.appendChild(wrap);
     });
@@ -1754,7 +1795,7 @@ function sendMessage() {
     const history = activeSession ? activeSession.history : [];
     if (isDrawing || checkModelSupportsDrawing()) {
         const wrap = document.createElement("div"); wrap.className = "bubble-wrap";
-        wrap.innerHTML = '<div class="avatar ai">AI</div><div class="bubble-content" style="width:100%;"><div style="padding:8px;"><span id="drawing-progress-text" style="font-size:11px;color:#ec4899;">🎨 正在生成图片...</span><div style="background:#1e293b;border-radius:8px;height:8px;margin-top:6px;overflow:hidden;"><div id="drawing-progress-bar" style="width:5%;height:100%;background:#ec4899;border-radius:8px;transition:width 0.3s;"></div></div></div></div>';
+        wrap.innerHTML = window.getAIAvatarHtml() + '<div class="bubble-content" style="width:100%;"><div style="padding:8px;"><span id="drawing-progress-text" style="font-size:11px;color:#ec4899;">🎨 正在生成图片...</span><div style="background:#1e293b;border-radius:8px;height:8px;margin-top:6px;overflow:hidden;"><div id="drawing-progress-bar" style="width:5%;height:100%;background:#ec4899;border-radius:8px;transition:width 0.3s;"></div></div></div></div>';
         document.getElementById("chat-container").appendChild(wrap); scrollToBottom(true);
         window.pywebview.api.start_drawing(finalMsg);
     } else if (window.attachedFile && window.attachedFile.type === 'image') {
@@ -1960,7 +2001,7 @@ window.handleImageGenerated = function (payload) {
             var img = document.createElement('img');
             img.src = data.image_url;
             img.style.cssText = 'max-width:100%;border-radius:12px;';
-            wrap.innerHTML = '<div class="avatar ai">AI</div><div class="bubble-content"></div>';
+            wrap.innerHTML = window.getAIAvatarHtml() + '<div class="bubble-content"></div>';
             wrap.querySelector('.bubble-content').appendChild(img);
             container.appendChild(wrap);
         }
@@ -1980,7 +2021,7 @@ window.handleImageGenerated = function (payload) {
         } else {
             var container2 = document.getElementById('chat-container');
             var wrap2 = document.createElement('div'); wrap2.className = "bubble-wrap";
-            wrap2.innerHTML = '<div class="avatar ai">AI</div><div class="bubble-content" style="color:#ef4444;">❌ 画图失败: ' + escapeHTML(data.message || '未知错误') + '</div>';
+            wrap2.innerHTML = window.getAIAvatarHtml() + '<div class="bubble-content" style="color:#ef4444;">❌ 画图失败: ' + escapeHTML(data.message || '未知错误') + '</div>';
             container2.appendChild(wrap2);
             scrollToBottom(true);
         }
@@ -4005,7 +4046,7 @@ window.handleImageGenerated = function (payload) {
         } else {
             var container = document.getElementById('chat-container');
             var wrap = document.createElement('div'); wrap.className = "bubble-wrap";
-            wrap.innerHTML = '<div class="avatar ai">AI</div><div class="bubble-content"><img src="' + data.image_url + '" style="max-width:100%;border-radius:12px;"></div>';
+            wrap.innerHTML = window.getAIAvatarHtml() + '<div class="bubble-content"><img src="' + data.image_url + '" style="max-width:100%;border-radius:12px;"></div>';
             container.appendChild(wrap);
             scrollToBottom(true);
         }
@@ -4026,7 +4067,7 @@ window.handleImageGenerated = function (payload) {
         // Always show error in chat
         var container2 = document.getElementById('chat-container');
         var wrap2 = document.createElement('div'); wrap2.className = "bubble-wrap";
-        wrap2.innerHTML = '<div class="avatar ai">AI</div><div class="bubble-content" style="color:#ef4444;font-size:12px;">❌ 画图失败: ' + escapeHTML(errMsg) + '</div>';
+        wrap2.innerHTML = window.getAIAvatarHtml() + '<div class="bubble-content" style="color:#ef4444;font-size:12px;">❌ 画图失败: ' + escapeHTML(errMsg) + '</div>';
         container2.appendChild(wrap2);
         scrollToBottom(true);
     }

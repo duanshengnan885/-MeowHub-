@@ -68,7 +68,7 @@ python -m venv .venv
 # source .venv/bin/activate  # macOS
 
 # 安装依赖
-pip install openai webview pyperclip pyinstaller Pillow pystray
+pip install pywebview openai psutil pystray pillow
 
 # 启动
 python main.py
@@ -119,6 +119,13 @@ pyinstaller MeowHub.spec
 ```
 
 ## 📝 更新日志
+
+### v1.1.1 (动态头像与依赖修复)
+- ✨ **动态真实头像**：全面重构 AI 头像展现逻辑。根据当前使用的模型 API，全自动智能识别并实时展示对应厂商（如 DeepSeek, Kimi, OpenAI, Claude, Ollama 等 20+ 平台）的官方真实图标，告别单调纯文字头像。
+- 🐛 **修复与重构**：
+  - 修正了导致安装报错的依赖项命名错误（`webview` -> `pywebview`），并补充了缺失的环境依赖。
+  - 移除了启动时强行在 `F:` 盘进行项目备份的硬编码逻辑，避免对克隆用户造成副作用，并将其重构为独立的 `scripts/local_backup.py` 工具脚本。
+
 
 ### v1.1.0 (全新可爱风 UI 与宠物升级版)
 - ✨ **全新功能**：加入桌面虚拟宠物，支持拖拽交互与状态动画展示
