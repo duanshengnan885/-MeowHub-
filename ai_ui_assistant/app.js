@@ -29,7 +29,7 @@ window.getAIAvatarHtml = function(overrideModel) {
     let m = model.toLowerCase();
     
     if (m.includes("deepseek")) domain = "deepseek.com";
-    else if (m.includes("moonshot") || m.includes("kimi")) domain = "kimi.moonshot.cn";
+    else if (m.includes("moonshot") || m.includes("kimi")) domain = "moonshot.cn";
     else if (m.includes("openai") || m.includes("gpt") || m.includes("dall")) domain = "openai.com";
     else if (m.includes("anthropic") || m.includes("claude")) domain = "anthropic.com";
     else if (m.includes("google") || m.includes("gemini")) domain = "google.com";
@@ -935,7 +935,7 @@ function loadSessionChatHistory() {
             if (msg.image_url) {
                 imageHtml = '<div style="margin-bottom:8px;"><img src="' + msg.image_url + '" style="max-width:100%;border-radius:12px;" onerror="this.style.display=\'none\'"></div>';
             }
-            wrap.innerHTML = `${window.getAIAvatarHtml()}<div class="bubble-content" style="width: 100%;">${imageHtml}${blockHtml}<div class="markdown-body">${parseMarkdownWithCopy(bodyText)}</div><div class="bubble-actions"><button onclick="copyBubbleText(this)" class="btn-bubble-action">📋 复制全文</button><button onclick="importToSandbox(${idx})" class="btn-bubble-action">📥 导入至沙盒</button><button onclick="importToSandboxDiff(${idx})" class="btn-bubble-action">💡 对比导入</button><button onclick="replayBubbleVoice(this)" class="btn-bubble-action btn-bubble-voice">🔊 听语音</button></div></div>`;
+            wrap.innerHTML = `${window.getAIAvatarHtml(msg.model)}<div class="bubble-content" style="width: 100%;">${imageHtml}${blockHtml}<div class="markdown-body">${parseMarkdownWithCopy(bodyText)}</div><div class="bubble-actions"><button onclick="copyBubbleText(this)" class="btn-bubble-action">📋 复制全文</button><button onclick="importToSandbox(${idx})" class="btn-bubble-action">📥 导入至沙盒</button><button onclick="importToSandboxDiff(${idx})" class="btn-bubble-action">💡 对比导入</button><button onclick="replayBubbleVoice(this)" class="btn-bubble-action btn-bubble-voice">🔊 听语音</button></div></div>`;
         }
         container.appendChild(wrap);
     });
@@ -1795,7 +1795,7 @@ function sendMessage() {
     const history = activeSession ? activeSession.history : [];
     if (isDrawing || checkModelSupportsDrawing()) {
         const wrap = document.createElement("div"); wrap.className = "bubble-wrap";
-        wrap.innerHTML = window.getAIAvatarHtml() + '<div class="bubble-content" style="width:100%;"><div style="padding:8px;"><span id="drawing-progress-text" style="font-size:11px;color:#ec4899;">🎨 正在生成图片...</span><div style="background:#1e293b;border-radius:8px;height:8px;margin-top:6px;overflow:hidden;"><div id="drawing-progress-bar" style="width:5%;height:100%;background:#ec4899;border-radius:8px;transition:width 0.3s;"></div></div></div></div>';
+        wrap.innerHTML = window.getAIAvatarHtml(activeSession ? activeSession.bound_model : null) + '<div class="bubble-content" style="width:100%;"><div style="padding:8px;"><span id="drawing-progress-text" style="font-size:11px;color:#ec4899;">🎨 正在生成图片...</span><div style="background:#1e293b;border-radius:8px;height:8px;margin-top:6px;overflow:hidden;"><div id="drawing-progress-bar" style="width:5%;height:100%;background:#ec4899;border-radius:8px;transition:width 0.3s;"></div></div></div></div>';
         document.getElementById("chat-container").appendChild(wrap); scrollToBottom(true);
         window.pywebview.api.start_drawing(finalMsg);
     } else if (window.attachedFile && window.attachedFile.type === 'image') {
@@ -2001,14 +2001,14 @@ window.handleImageGenerated = function (payload) {
             var img = document.createElement('img');
             img.src = data.image_url;
             img.style.cssText = 'max-width:100%;border-radius:12px;';
-            wrap.innerHTML = window.getAIAvatarHtml() + '<div class="bubble-content"></div>';
+            wrap.innerHTML = window.getAIAvatarHtml(activeSession ? activeSession.bound_model : null) + '<div class="bubble-content"></div>';
             wrap.querySelector('.bubble-content').appendChild(img);
             container.appendChild(wrap);
         }
         scrollToBottom(true);
         var activeSession = window.sessions.find(function(s) { return s.id === window.activeSessionId; });
         if (activeSession) {
-            activeSession.history.push({ role: "assistant", content: "[生成图片: " + (data.filename || '') + "]", image_url: data.image_url });
+            activeSession.history.push({ role: "assistant", model: activeSession.bound_model, content: "[生成图片: " + (data.filename || '') + "]", image_url: data.image_url });
             saveSettingsSilent();
         }
         updateSessionStatistics();
@@ -2055,7 +2055,7 @@ window.handleStreamEnd = function () {
 
                 const activeSession = window.sessions.find(s => s.id === window.activeSessionId);
                 if (activeSession) {
-                    activeSession.history.push({ role: "assistant", content: window.activeContentText, latency: elapsedSeconds });
+                    activeSession.history.push({ role: "assistant", model: activeSession.bound_model, content: window.activeContentText, latency: elapsedSeconds });
                     const systemFeedback = `<os_result>\n${result}\n</os_result>`;
                     activeSession.history.push({ role: "system", content: systemFeedback });
                     saveSettingsSilent();
@@ -2070,7 +2070,7 @@ window.handleStreamEnd = function () {
 
         const activeSession = window.sessions.find(s => s.id === window.activeSessionId);
         if (activeSession) {
-            activeSession.history.push({ role: "assistant", content: window.activeContentText, latency: elapsedSeconds });
+            activeSession.history.push({ role: "assistant", model: activeSession.bound_model, content: window.activeContentText, latency: elapsedSeconds });
             const msgIdx = activeSession.history.length - 1;
             const actionArea = document.createElement('div');
             actionArea.className = "bubble-actions";
@@ -4046,13 +4046,13 @@ window.handleImageGenerated = function (payload) {
         } else {
             var container = document.getElementById('chat-container');
             var wrap = document.createElement('div'); wrap.className = "bubble-wrap";
-            wrap.innerHTML = window.getAIAvatarHtml() + '<div class="bubble-content"><img src="' + data.image_url + '" style="max-width:100%;border-radius:12px;"></div>';
+            wrap.innerHTML = window.getAIAvatarHtml(activeSession ? activeSession.bound_model : null) + '<div class="bubble-content"><img src="' + data.image_url + '" style="max-width:100%;border-radius:12px;"></div>';
             container.appendChild(wrap);
             scrollToBottom(true);
         }
         var activeSession = window.sessions.find(function(s) { return s.id === window.activeSessionId; });
         if (activeSession) {
-            activeSession.history.push({ role: "assistant", content: "[生成图片: " + (data.filename || '') + "]", image_url: data.image_url });
+            activeSession.history.push({ role: "assistant", model: activeSession.bound_model, content: "[生成图片: " + (data.filename || '') + "]", image_url: data.image_url });
             saveSettingsSilent();
         }
         updateSessionStatistics();
