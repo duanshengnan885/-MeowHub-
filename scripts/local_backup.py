@@ -16,7 +16,11 @@ def do_backup():
         os.makedirs(backup_root, exist_ok=True)
         shutil.copytree(
             project_dir, backup_dest,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".venv", "build", "dist", ".git", "node_modules"),
+            ignore=shutil.ignore_patterns(
+                "__pycache__", "*.pyc", ".venv", "build", "dist", ".git", "node_modules",
+                "api_credentials.json", "chat_sessions.json", "app_config.json",
+                "memory", "releases", "*.log", ".token_tracker.json", ".balance_snapshot.json"
+            ),
             dirs_exist_ok=True
         )
         print(f"[Backup] 项目已成功备份至: {backup_dest}")
