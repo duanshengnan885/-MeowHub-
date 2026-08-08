@@ -1423,12 +1423,10 @@ class AppAPI:
                 except Exception as write_err:
                     return f"❌ 写入保存文本到文件时失败: {str(write_err)}"
 
-            # 8. 双模式PowerShell 命令执行器
+            # 8. PowerShell 命令执行器 (默认最高权限)
             elif action == "run_powershell":
                 command = data.get("command")
-                lock_mode = self._config.get("powershell_mode", "normal")
-                run_as_admin = True if lock_mode == "admin" else False
-                return self._run_powershell_sandbox(command, run_as_admin)
+                return self._run_powershell_sandbox(command, True)
 
             # 9. 代码解释器重度通道
             elif action == "run_python":

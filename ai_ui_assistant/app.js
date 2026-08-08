@@ -68,10 +68,6 @@ window.addEventListener('pywebviewready', function () {
             try {
                 document.getElementById('config-provider').value = config.provider;
                 document.getElementById('config-prompt').value = config.system_prompt;
-                window.modelLockMode = config.model_lock_mode || "free";
-                document.getElementById('config-model-lock').value = window.modelLockMode;
-                window.powershellMode = config.powershell_mode || "normal";
-                document.getElementById('config-powershell-mode').value = window.powershellMode;
                 window.fontSize = config.font_size || 13.5;
                 document.getElementById('config-font-size').value = window.fontSize;
                 updateGlobalFontSize(window.fontSize);
@@ -145,9 +141,9 @@ window.addEventListener('pywebviewready', function () {
                 const autostartEl = document.getElementById('config-autostart');
                 if (autostartEl) autostartEl.value = activeAutostart;
 
-                const activeTerminal = config.default_terminal || "system";
-                const terminalEl = document.getElementById('config-default-terminal');
-                if (terminalEl) terminalEl.value = activeTerminal;
+                const activeAgentLevel = config.agent_control_level || "ask";
+                const agentLevelEl = document.getElementById('agent-control-level');
+                if (agentLevelEl) agentLevelEl.value = activeAgentLevel;
 
                 const mainOnTop = config.main_window_on_top !== undefined ? config.main_window_on_top : false;
                 const mainOnTopEl = document.getElementById('config-main-window-on-top');
@@ -246,6 +242,7 @@ window.addEventListener('pywebviewready', function () {
 
                 window.modelList = config.models || [];
                 renderModelList();
+                window.custom_presets = config.custom_presets || [];
                 window.presets = config.presets || [];
                 renderPresets();
 
@@ -307,6 +304,8 @@ function bindEventListeners() {
         });
     });
 
+    document.getElementById('config-prompt').addEventListener('input', updateStatusBar);
+
     document.getElementById('config-api-key').addEventListener('input', function () {
         const provider = document.getElementById('config-provider').value;
         if (!window.providers[provider]) window.providers[provider] = { api_base: "", api_key: "" };
@@ -325,8 +324,6 @@ function bindEventListeners() {
 
     document.getElementById('config-provider').addEventListener('change', onProviderChange);
     document.getElementById('config-active-model').addEventListener('change', onActiveModelChange);
-    document.getElementById('config-model-lock').addEventListener('change', onModelLockModeChange);
-    document.getElementById('config-powershell-mode').addEventListener('change', onPowershellModeChange);
     document.getElementById('config-font-size').addEventListener('change', onFontSizeChange);
 
     document.getElementById('config-temp').addEventListener('input', updateSliderLabels);
@@ -382,8 +379,8 @@ function bindEventListeners() {
     if (zoomEl) zoomEl.addEventListener('change', onZoomLevelChange);
     const autostartEl = document.getElementById('config-autostart');
     if (autostartEl) autostartEl.addEventListener('change', onAutostartChange);
-    const terminalEl = document.getElementById('config-default-terminal');
-    if (terminalEl) terminalEl.addEventListener('change', onDefaultTerminalChange);
+    const agentLevelEl = document.getElementById('agent-control-level');
+    if (agentLevelEl) agentLevelEl.addEventListener('change', saveSettingsSilent);
     const openDirBtn = document.getElementById('btn-open-data-dir');
     if (openDirBtn) openDirBtn.addEventListener('click', openDataDirectory);
     const autoUpdateEl = document.getElementById('config-auto-update');
@@ -396,6 +393,9 @@ function bindEventListeners() {
     if (floatTopEl) floatTopEl.addEventListener('change', saveSettingsSilent);
     const checkUpdateBtn = document.getElementById('btn-check-update');
     if (checkUpdateBtn) checkUpdateBtn.addEventListener('click', checkForUpdates);
+
+    const addPresetBtn = document.getElementById('btn-add-custom-preset');
+    if (addPresetBtn) addPresetBtn.addEventListener('click', addCustomPreset);
 
     // 【新增】：保存配置按鈕
     const petEnabledEl = document.getElementById('config-desktop-pet-enabled');
@@ -887,12 +887,8 @@ function switchSession(sessId) {
     window.activeSessionId = sessId;
     renderSessionList();
     const activeSession = window.sessions.find(s => s.id === window.activeSessionId);
-    if (activeSession && window.modelLockMode === "locked" && activeSession.bound_provider) {
-        document.getElementById('config-provider').value = activeSession.bound_provider;
-        const provCfg = window.providers[activeSession.bound_provider] || { api_base: "", api_key: "" };
-        document.getElementById('config-api-base').value = provCfg.api_base;
-        document.getElementById('config-api-key').value = provCfg.api_key;
-        populateModelDropdown(activeSession.bound_model);
+    if (activeSession) {
+        // Model locking removed
     }
     loadSessionChatHistory();
     saveSettingsSilent();
@@ -969,7 +965,7 @@ function createNewSession() {
 }
 
 function deleteSession(sessId) {
-    if (window.sessions.length <= 1) { alert("至少需要保留一个激活的会话窗口！"); return; }
+    if (window.sessions.length <= 1) { showToast("至少需要保留一个激活的会话窗口！", "error"); return; }
     if (!confirm("确定要删除该会话吗？")) return;
     const idx = window.sessions.findIndex(s => s.id === sessId);
     window.sessions.splice(idx, 1);
@@ -1067,7 +1063,7 @@ function importToSandbox(msgIdx) {
 
 function exportSandboxMarkdown() {
     const text = document.getElementById('sandbox-textarea').value;
-    if (!text.trim()) { alert("沙盒内无内容！"); return; }
+    if (!text.trim()) { showToast("沙盒内无内容！", "error"); return; }
     
     const defaultFilename = `Draft_${Date.now()}.md`;
     
@@ -1075,11 +1071,12 @@ function exportSandboxMarkdown() {
         window.pywebview.api.export_chat_log_to_file(text, defaultFilename).then(function(res) {
             if (res.status === 'success') {
                 console.log("Sandbox draft saved to: " + res.file_path);
+                showToast("✅ 导出成功！", "success");
             } else if (res.status === 'error') {
-                alert("导出失败: " + res.message);
+                showToast("导出失败: " + res.message, "error");
             }
         }).catch(function(err) {
-            alert("导出异常: " + err);
+            showToast("导出异常: " + err, "error");
         });
     }
 }
@@ -1096,6 +1093,26 @@ function selectPresetRole(promptText, name) {
     document.getElementById('config-prompt').value = promptText;
     const msgEl = document.getElementById('save-msg'); msgEl.style.color = "#818cf8"; msgEl.textContent = `🎯 已选择预设：${name}`;
     setTimeout(() => { msgEl.textContent = ""; }, 2500);
+    saveSettingsSilent();
+    updateStatusBar();
+}
+
+function addCustomPreset() {
+    const currentPrompt = document.getElementById('config-prompt').value.trim();
+    if (!currentPrompt) {
+        showToast("⚠️ 当前提示词为空，无法保存", "error");
+        return;
+    }
+    const name = prompt("请输入自定义预设名称 (如: '高级写手'):");
+    if (name && name.trim() !== "") {
+        const newPreset = { name: "⭐ " + name.trim(), prompt: currentPrompt };
+        window.custom_presets = window.custom_presets || [];
+        window.custom_presets.push(newPreset);
+        window.presets.push(newPreset);
+        renderPresets();
+        saveSettingsSilent();
+        showToast("✅ 自定义预设已保存", "success");
+    }
 }
 
 function updateSliderLabels() {
@@ -1109,7 +1126,20 @@ function updateStatusBar() {
     const provider = document.getElementById('config-provider').value.toUpperCase();
     const modelSelect = document.getElementById('config-active-model');
     const modelName = modelSelect.options[modelSelect.selectedIndex]?.text || "未选定模型";
-    document.getElementById('status-bar').textContent = `🧠 ${provider} | 📦 ${modelName}`;
+    
+    const currentPrompt = document.getElementById('config-prompt').value.trim();
+    let roleName = "默认设定";
+    if (currentPrompt) {
+        roleName = "自定义角色";
+        if (window.presets) {
+            const matchedPreset = window.presets.find(p => p.prompt.trim() === currentPrompt);
+            if (matchedPreset) {
+                roleName = matchedPreset.name;
+            }
+        }
+    }
+    
+    document.getElementById('status-bar').textContent = `🧠 ${provider} | 📦 ${modelName} | 🎭 ${roleName}`;
 }
 
 function onProviderChange() {
@@ -1131,31 +1161,11 @@ function onProviderChange() {
 function onActiveModelChange() {
     const activeModel = document.getElementById('config-active-model').value;
     const currentProvider = document.getElementById('config-provider').value;
-    if (window.modelLockMode === "locked") {
-        const activeSession = window.sessions.find(s => s.id === window.activeSessionId);
-        if (activeSession) { activeSession.bound_provider = currentProvider; activeSession.bound_model = activeModel; }
-    }
     updateStatusBar();
     renderOtherModelsForActiveProvider();
     saveSettingsSilent();
 }
 
-function onModelLockModeChange() {
-    window.modelLockMode = document.getElementById('config-model-lock').value;
-    if (window.modelLockMode === "locked") {
-        const activeSession = window.sessions.find(s => s.id === window.activeSessionId);
-        if (activeSession) {
-            activeSession.bound_provider = document.getElementById('config-provider').value;
-            activeSession.bound_model = document.getElementById('config-active-model').value;
-        }
-    }
-    saveSettingsSilent();
-}
-
-function onPowershellModeChange() {
-    window.powershellMode = document.getElementById('config-powershell-mode').value;
-    saveSettingsSilent();
-}
 
 // 【新增】：界面缩放比例变更
 function onZoomLevelChange() {
@@ -1348,7 +1358,7 @@ function saveSettingsSilent() {
         close_action: closeAction,
         zoom_level: (document.getElementById('config-zoom-level') || {}).value || "100%",
         autostart: (document.getElementById('config-autostart') || {}).value || "disabled",
-        default_terminal: (document.getElementById('config-default-terminal') || {}).value || "system",
+        agent_control_level: (document.getElementById('agent-control-level') || {}).value || "ask",
         auto_update: (document.getElementById('config-auto-update') || {}).value || "disabled",
         update_notify: (document.getElementById('config-update-notify') || {}).value || "enabled",
         show_float_card: (document.getElementById('config-show-float-card') || {}).value || "disabled",
@@ -1397,7 +1407,8 @@ function saveSettingsSilent() {
         models: window.modelList,
         sessions: window.sessions,
         active_session_id: window.activeSessionId,
-        providers: window.providers
+        providers: window.providers,
+        custom_presets: window.custom_presets || []
     };
     window.pywebview.api.save_config(config);
 }
@@ -2422,7 +2433,7 @@ function updateStatusOrb(status) {
 function exportChatLog() {
     const activeSession = window.sessions.find(s => s.id === window.activeSessionId);
     if (!activeSession || activeSession.history.length === 0) {
-        alert("当前会话暂无记录可导出！");
+        showToast("当前会话暂无记录可导出！", "error");
         return;
     }
 
@@ -2438,11 +2449,12 @@ function exportChatLog() {
         window.pywebview.api.export_chat_log_to_file(mdText, defaultFilename).then(function(res) {
             if (res.status === 'success') {
                 console.log("Chat log saved successfully to: " + res.file_path);
+                showToast("✅ 导出成功！", "success");
             } else if (res.status === 'error') {
-                alert("导出失败: " + res.message);
+                showToast("导出失败: " + res.message, "error");
             }
         }).catch(function(err) {
-            alert("导出异常: " + err);
+            showToast("导出异常: " + err, "error");
         });
     }
 }

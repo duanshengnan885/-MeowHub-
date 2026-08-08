@@ -1,4 +1,4 @@
-﻿/.venv
+/.venv
 /api_credentials.json
 /app_config.json
 /chat_sessions.json
@@ -10,3 +10,4 @@
 debug_js.log
 /.idea/
 /memory/
+/scripts/local_backup.py

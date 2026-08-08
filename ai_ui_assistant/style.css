@@ -3141,3 +3141,40 @@ body[data-theme="light"] .float-resize-handle::after {
     0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0.8; }
     100% { transform: translate(-50%, -50%) scale(1.5); opacity: 0; }
 }
+
+/* 模型选择器横向滚动条定制 */
+.custom-scrollbar-x::-webkit-scrollbar {
+    height: 6px;
+}
+.custom-scrollbar-x::-webkit-scrollbar-track {
+    background: transparent;
+}
+.custom-scrollbar-x::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15); /* 不动时较暗 */
+    border-radius: 3px;
+}
+.custom-scrollbar-x:hover::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.4); /* 鼠标移入容器时稍亮 */
+}
+.custom-scrollbar-x::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.8); /* 鼠标移入滚动条时更亮 */
+}
+
+/* 提示词列表垂直滚动条定制 */
+.custom-scrollbar-y::-webkit-scrollbar {
+    width: 6px;
+}
+.custom-scrollbar-y::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 3px;
+}
+.custom-scrollbar-y::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+}
+.custom-scrollbar-y:hover::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.4);
+}
+.custom-scrollbar-y::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.8);
+}

@@ -126,8 +126,13 @@
                 <span id="context-text">正在评估大模型上下文载荷...</span>
             </div>
 
-            <!-- 工具层：深度思考、联网搜索、绘图创作 -->
+            <!-- 工具层：代理等级、深度思考、联网搜索、绘图创作 -->
             <div class="chat-toolbar">
+                <select id="agent-control-level" class="toolbar-btn" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 4px 8px; font-size: 11px; color: #fff; cursor: pointer; margin-right: 2px; outline: none;" title="设置系统接管权限等级">
+                    <option value="ask">💬 询问</option>
+                    <option value="detect">🔍 检测</option>
+                    <option value="control">⚡ 完全控制</option>
+                </select>
                 <button id="btn-deep-thinking" class="toolbar-btn deep-thinking" title="开启深度思考功能 (Deep Thinking)">🧠 深度思考</button>
                 <button id="btn-web-search" class="toolbar-btn web-search" title="开启联网搜索功能 (Web Search)">🌐 联网搜索</button>
                 <button id="btn-draw-image" class="toolbar-btn draw-image" title="生成图片 (Text-to-Image / Image-to-Image)">🎨 绘图创作</button>
@@ -215,16 +220,7 @@
                                 </div>
                             </div>
                             <div class="grid-2" style="margin-top: 6px;">
-                                <div class="form-group">
-                                    <label>💻 默认终端</label>
-                                    <select id="config-default-terminal" class="form-control">
-                                        <option value="system">系统默认</option>
-                                        <option value="powershell">PowerShell</option>
-                                        <option value="cmd">命令提示符 (CMD)</option>
-                                        <option value="wt">Windows Terminal</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
+                                <div class="form-group" style="grid-column: span 2;">
                                     <label>📌 主界面始终置顶</label>
                                     <select id="config-main-window-on-top" class="form-control">
                                         <option value="true">置顶</option>
@@ -240,8 +236,15 @@
                             </div>
                         </div>
                     </details>
-                    <details class="level-2-card">
-                        <summary class="level-2-summary">🔔 更新与通知</summary>
+                </div>
+            </details>
+
+            <!-- 【一级折叠 card 1.1】：更新与通知 -->
+            <details class="level-1-card">
+                <summary class="level-1-summary">🔔 更新与通知</summary>
+                <div class="level-1-content">
+                    <details class="level-2-card" open>
+                        <summary class="level-2-summary">⚙️ 更新设置</summary>
                         <div class="level-2-content">
                             <div class="grid-2">
                                 <div class="form-group">
@@ -265,8 +268,15 @@
                             <div id="update-status-msg" style="margin-top:6px; font-size:10px; color:#64748b; text-align:center; min-height:14px;"></div>
                         </div>
                     </details>
-                    <details class="level-2-card">
-                        <summary class="level-2-summary">🎞️ 展示与悬浮卡片</summary>
+                </div>
+            </details>
+
+            <!-- 【一级折叠 card 1.2】：桌宠 -->
+            <details class="level-1-card">
+                <summary class="level-1-summary">🎞️ 桌宠</summary>
+                <div class="level-1-content">
+                    <details class="level-2-card" open>
+                        <summary class="level-2-summary">⚙️ 基础设置</summary>
                         <div class="level-2-content">
                             <div class="grid-2">
                                 <div class="form-group">
@@ -309,7 +319,7 @@
 
             <!-- 【一级折叠 card 1】：通道密钥 -->
             <details class="level-1-card" open>
-                <summary class="level-1-summary">📡 通道与密钥授权</summary>
+                <summary class="level-1-summary">📡 通道密钥与模型数据库管理</summary>
                 <div class="level-1-content">
                     <details class="level-2-card" open>
                         <summary class="level-2-summary">🔗 基础网关与路由选择</summary>
@@ -324,9 +334,11 @@
                                         <option value="custom">第三方接口 (OpenAI)</option>
                                     </select>
                                 </div>
-                                <div class="form-group">
-                                    <label>激活机型</label>
-                                    <select id="config-active-model" class="form-control"></select>
+                                <div class="form-group" style="min-width: 0;">
+                                    <label>模型</label>
+                                    <div class="custom-scrollbar-x" style="width: 100%; overflow-x: auto; padding-bottom: 4px;">
+                                        <select id="config-active-model" class="form-control" style="min-width: 100%; width: max-content;"></select>
+                                    </div>
                                 </div>
                                 <div id="other-models-group" class="form-group" style="grid-column: span 2; margin-top: 6px; display: none;">
                                     <label style="color: var(--accent-color); font-weight: bold; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.8px;">⚡ 同提供商下其他可选机型 (快捷切换)</label>
@@ -358,76 +370,8 @@
                             </div>
                         </div>
                     </details>
-                </div>
-            </details>
 
-            <!-- 【一级折叠 card 2】：核心参数与界面 -->
-            <details class="level-1-card">
-                <summary class="level-1-summary">⚙️ 算法采样与提示策略</summary>
-                <div class="level-1-content">
-                    <details class="level-2-card" open>
-                        <summary class="level-2-summary">🌡️ 核心参数调节</summary>
-                        <div class="level-2-content">
-                            <div class="grid-2">
-                                <div class="slider-control">
-                                    <div class="slider-header"><span>采样温度</span><span id="slider-temp-val"
-                                            class="slider-val">0.7</span></div>
-                                    <input id="config-temp" type="range" min="0.0" max="1.5" step="0.1" value="0.7">
-                                </div>
-                                <div class="slider-control">
-                                    <div class="slider-header"><span>最大Token</span><span id="slider-tokens-val"
-                                            class="slider-val">2048</span></div>
-                                    <input id="config-tokens" type="range" min="256" max="8192" step="128" value="2048">
-                                </div>
-                            </div>
-                            <div class="grid-2" style="margin-top: 6px;">
-                                <div class="slider-control" style="grid-column: span 2;">
-                                    <div class="slider-header"><span>对话字号大小</span><span id="slider-font-val"
-                                            class="slider-val">13.5px</span></div>
-                                    <input id="config-font-size" type="range" min="12" max="22" step="0.5" value="13.5">
-                                </div>
-                            </div>
-                            <div class="grid-2"
-                                style="margin-top: 4px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 8px;">
-                                <div class="form-group">
-                                    <label>🔗 对话模型绑定模式</label>
-                                    <select id="config-model-lock" class="form-control">
-                                        <option value="free">自由切换 (全局统一)</option>
-                                        <option value="locked">单会话锁定 (会话固定)</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label>💻 PowerShell 执行权限</label>
-                                    <select id="config-powershell-mode" class="form-control">
-                                        <option value="normal">普通模式 (子进程限制)</option>
-                                        <option value="admin">管理员提权 (UAC窗口弹出)</option>
-                                    </select>
-                                </div>
-                            </div>
-
-                        </div>
-                    </details>
-                    <details class="level-2-card" open>
-                        <summary class="level-2-summary">🧠 系统提示词及角色库</summary>
-                        <div class="level-2-content">
-                            <div class="form-group" style="margin-bottom: 8px;">
-                                <label>提示词 (System Prompt)</label>
-                                <input id="config-prompt" class="form-control">
-                            </div>
-                            <div class="form-group">
-                                <label style="margin-bottom: 6px;">快速角色预设</label>
-                                <div id="presets-container" class="presets-grid"></div>
-                            </div>
-                        </div>
-                    </details>
-                </div>
-            </details>
-
-            <!-- 【一级折叠 card 3】：数据库与应用商店 -->
-            <details class="level-1-card">
-                <summary class="level-1-summary">📦 模型数据库管理</summary>
-                <div class="level-1-content">
-                    <details class="level-2-card" open>
+<details class="level-2-card" open>
                         <summary class="level-2-summary">📂 已配置大模型库</summary>
                         <div class="level-2-content">
                             <div id="model-list-container" class="model-list-wrapper"></div>
@@ -504,14 +448,8 @@
                             </div>
                         </div>
                     </details>
-                </div>
-            </details>
-            
-            <!-- 🎨 画图模型管理 -->
-            <details class="level-1-card" open>
-                <summary class="level-1-summary">🎨 画图模型管理</summary>
-                <div class="level-1-content">
-                    <details class="level-2-card" open>
+
+<details class="level-2-card" open>
                         <summary class="level-2-summary">🖼️ 本地 SD 模型库</summary>
                         <div class="level-2-content">
                             <div id="drawing-model-list-container" class="model-list-wrapper"></div>
@@ -550,6 +488,63 @@
                     </details>
                 </div>
             </details>
+
+            <!-- 【一级折叠 card 2】：核心参数与界面 -->
+            <details class="level-1-card">
+                <summary class="level-1-summary">⚙️ 算法采样与提示策略</summary>
+                <div class="level-1-content">
+                    <details class="level-2-card" open>
+                        <summary class="level-2-summary">🌡️ 核心参数调节</summary>
+                        <div class="level-2-content">
+                            <div class="grid-2">
+                                <div class="slider-control" title="较高的值会使输出更加随机，较低的值会使其更加集中和确定。">
+                                    <div class="slider-header"><span>采样温度</span><span id="slider-temp-val"
+                                            class="slider-val">0.7</span></div>
+                                    <input id="config-temp" type="range" min="0.0" max="1.5" step="0.1" value="0.7">
+                                </div>
+                                <div class="slider-control" title="生成文本的最大长度限制。">
+                                    <div class="slider-header"><span>最大Token</span><span id="slider-tokens-val"
+                                            class="slider-val">2048</span></div>
+                                    <input id="config-tokens" type="range" min="256" max="8192" step="128" value="2048">
+                                </div>
+                            </div>
+                            <div class="grid-2" style="margin-top: 6px;">
+                                <div class="slider-control" style="grid-column: span 2;" title="控制聊天对话内容的字体大小。">
+                                    <div class="slider-header"><span>对话字号大小</span><span id="slider-font-val"
+                                            class="slider-val">13.5px</span></div>
+                                    <input id="config-font-size" type="range" min="12" max="22" step="0.5" value="13.5">
+                                </div>
+                            </div>
+
+                        </div>
+                    </details>
+                </div>
+            </details>
+
+            <!-- 【一级折叠 card 2.5】：提示词与角色库 -->
+            <details class="level-1-card">
+                <summary class="level-1-summary">🧠 系统提示词及角色库</summary>
+                <div class="level-1-content">
+                    <details class="level-2-card" open>
+                        <summary class="level-2-summary">🎭 当前设定</summary>
+                        <div class="level-2-content">
+                            <div class="form-group" style="margin-bottom: 8px;">
+                                <label>提示词 (System Prompt)</label>
+                                <textarea id="config-prompt" class="form-control custom-scrollbar-y" rows="5" style="resize: vertical; min-height: 100px; font-family: inherit; font-size: 11px; padding: 8px; line-height: 1.4;"></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label style="margin-bottom: 6px;">快速角色预设</label>
+                                <div id="presets-container" class="presets-grid custom-scrollbar-y" style="max-height: 180px; overflow-y: auto; padding-right: 4px;"></div>
+                                <button id="btn-add-custom-preset" class="btn-secondary" style="margin-top: 8px; width: 100%; background: linear-gradient(135deg, #10b981, #059669); color: white; border: none; padding: 6px; border-radius: 6px; font-size: 11px; cursor: pointer; font-weight: bold; transition: all 0.2s;">➕ 保存当前提示词为自定义预设</button>
+                            </div>
+                        </div>
+                    </details>
+                </div>
+            </details>
+
+            
+            
+            
 
             <!-- 💬 悬浮对话设置 -->
             <details class="level-1-card">

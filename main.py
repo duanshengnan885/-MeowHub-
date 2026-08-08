@@ -652,6 +652,17 @@ if __name__ == "__main__":
                     print("[Warn] Failed to automatically sync autostart:", ex)
             threading.Thread(target=async_sync_autostart, daemon=True).start()
 
+        # 启动时自动触发本地代码备份（如果脚本存在）
+        backup_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "local_backup.py")
+        if os.path.exists(backup_script):
+            def run_backup():
+                import subprocess
+                try:
+                    subprocess.run([sys.executable, backup_script], check=True)
+                except Exception as e:
+                    print(f"[Warn] Auto backup failed: {e}")
+            threading.Thread(target=run_backup, daemon=True).start()
+
     window.events.shown += on_shown
 
     # 启动托盘图标守护
