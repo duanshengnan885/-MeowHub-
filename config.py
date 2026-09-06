@@ -1,8 +1,8 @@
-# config.py
 import json
-from pathlib import Path
-
+import os
+import shutil
 import sys
+from pathlib import Path
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys.executable).resolve().parent
@@ -15,6 +15,18 @@ CREDENTIALS_FILE = BASE_DIR / "api_credentials.json"
 SESSIONS_FILE = BASE_DIR / "chat_sessions.json"
 
 
+def _safe_log(msg):
+    """安全日志打印，防止 Windows 非 UTF-8 控制台下 Unicode 字符引发 UnicodeEncodeError"""
+    try:
+        print(msg)
+    except Exception:
+        try:
+            encoding = getattr(sys.stdout, 'encoding', None) or 'utf-8'
+            print(str(msg).encode(encoding, errors='replace').decode(encoding))
+        except Exception:
+            pass
+
+
 def get_default_config():
     """1. 应用基础配置默认值"""
     return {
@@ -24,6 +36,7 @@ def get_default_config():
         "temperature": 0.7,
         "max_tokens": 2048,
         "theme": "sakura",
+        "deep_thinking_level": 0,
         "deep_thinking_enabled": False,
         "web_search_enabled": False,
         "font_size": 13.5,
@@ -61,25 +74,25 @@ def get_default_credentials():
     """2. 核心大模型API密钥库默认配置"""
     return {
         "models": [
-            {"id": "deepseek-chat", "name": "DeepSeek-V3", "type": "chat", "context": "128K", "provider": "deepseek"},
+            {"id": "deepseek-chat", "name": "DeepSeek-V3", "type": "chat", "context": "128K", "provider": "deepseek", "max_reasoning_level": 0},
             {"id": "deepseek-reasoner", "name": "DeepSeek-R1", "type": "reasoning", "context": "64K",
-             "provider": "deepseek"},
+             "provider": "deepseek", "max_reasoning_level": 2},
             {"id": "kimi-k2.6", "name": "Kimi-K2.6 (思考旗舰)", "type": "reasoning", "context": "256K",
-             "provider": "kimi"},
+             "provider": "kimi", "max_reasoning_level": 3},
             {"id": "kimi-k2.5", "name": "Kimi-K2.5 (思考智能体)", "type": "reasoning", "context": "256K",
-             "provider": "kimi"},
+             "provider": "kimi", "max_reasoning_level": 2},
             {"id": "cogview-3", "name": "Kimi-CogView-3 (绘图)", "type": "drawing", "context": "画图",
-             "provider": "kimi"},
+             "provider": "kimi", "max_reasoning_level": 0},
             {"id": "moonshot-v1-8k", "name": "Kimi-v1-8K (标准版)", "type": "chat", "context": "8K",
-             "provider": "kimi"},
+             "provider": "kimi", "max_reasoning_level": 0},
             {"id": "moonshot-v1-32k", "name": "Kimi-v1-32K (长文本)", "type": "chat", "context": "32K",
-             "provider": "kimi"},
+             "provider": "kimi", "max_reasoning_level": 0},
             {"id": "moonshot-v1-128k", "name": "Kimi-v1-128K (超长文本)", "type": "chat", "context": "128K",
-             "provider": "kimi"},
+             "provider": "kimi", "max_reasoning_level": 0},
             {"id": "dall-e-3", "name": "DALL-E-3 (画图旗舰)", "type": "drawing", "context": "画图",
-             "provider": "custom"},
+             "provider": "custom", "max_reasoning_level": 0},
             {"id": "deepseek-r1:7b", "name": "Ollama R1-7B", "type": "reasoning_tag", "context": "8K",
-             "provider": "local"}
+             "provider": "local", "max_reasoning_level": 2}
         ],
         "providers": {
             "deepseek": {"api_base": "https://api.deepseek.com/v1", "api_key": ""},
@@ -176,6 +189,36 @@ def get_default_presets():
     }
 
 
+def _load_json_with_bak(file_path):
+    """读取 JSON 配置，损坏或异常时自动尝试从 .bak 容灾恢复"""
+    file_path = Path(file_path)
+    bak_path = file_path.with_suffix(file_path.suffix + ".bak")
+    
+    if file_path.exists():
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as err:
+            _safe_log(f"⚠️ 读取主配置 {file_path.name} 异常: {err}，尝试从备份容灾恢复...")
+            if bak_path.exists():
+                try:
+                    with open(bak_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        _safe_log(f"✅ 成功从容灾备份 {bak_path.name} 恢复配置！")
+                        return data
+                except Exception as bak_err:
+                    _safe_log(f"❌ 读取备份 {bak_path.name} 亦失败: {bak_err}")
+    elif bak_path.exists():
+        try:
+            with open(bak_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                _safe_log(f"✅ 主配置 {file_path.name} 不存在，已从备份 {bak_path.name} 自动重建！")
+                return data
+        except Exception:
+            pass
+    return None
+
+
 def load_all_configs():
     """核心分流加载与向下兼容迁移主函数"""
     config = get_default_config()
@@ -184,36 +227,34 @@ def load_all_configs():
     presets_data = get_default_presets()
 
     # 1. 优先加载本地 api_credentials.json (密钥库)
-    if CREDENTIALS_FILE.exists():
+    loaded_cred = _load_json_with_bak(CREDENTIALS_FILE)
+    if loaded_cred:
         try:
-            with open(CREDENTIALS_FILE, "r", encoding="utf-8") as f:
-                loaded_cred = json.load(f)
-
-                # 合并并补齐模型
-                if "models" in loaded_cred:
-                    local_ids = {m["id"] for m in loaded_cred["models"]}
-                    for default_m in credentials["models"]:
-                        if default_m["id"] not in local_ids:
-                            loaded_cred["models"].append(default_m)
-                    for m in loaded_cred["models"]:
-                        if "provider" not in m:
-                            if "kimi" in m["id"] or "moonshot" in m["id"]:
-                                m["provider"] = "kimi"
-                            elif "deepseek" in m["id"]:
-                                m["provider"] = "deepseek"
-                            elif "ollama" in m["id"] or ":" in m["id"]:
-                                m["provider"] = "local"
-                            else:
-                                m["provider"] = "custom"
-                credentials.update(loaded_cred)
+            # 合并并补齐模型
+            if "models" in loaded_cred:
+                local_ids = {m["id"] for m in loaded_cred["models"]}
+                for default_m in credentials["models"]:
+                    if default_m["id"] not in local_ids:
+                        loaded_cred["models"].append(default_m)
+                for m in loaded_cred["models"]:
+                    if "provider" not in m:
+                        if "kimi" in m["id"] or "moonshot" in m["id"]:
+                            m["provider"] = "kimi"
+                        elif "deepseek" in m["id"]:
+                            m["provider"] = "deepseek"
+                        elif "ollama" in m["id"] or ":" in m["id"]:
+                            m["provider"] = "local"
+                        else:
+                            m["provider"] = "custom"
+            credentials.update(loaded_cred)
         except Exception:
             pass
 
     # 2. 载入本地 app_config.json (中控)
-    if CONFIG_FILE.exists():
+    loaded_cfg = _load_json_with_bak(CONFIG_FILE)
+    if loaded_cfg:
         try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                config.update(json.load(f))
+            config.update(loaded_cfg)
             # 自动纠错保护：防老配置残留导致模式被锁在 free 变不回
             if "model_lock_mode" not in config:
                 config["model_lock_mode"] = "free"
@@ -221,10 +262,10 @@ def load_all_configs():
             pass
 
     # 3. 载入本地 chat_sessions.json (历史)
-    if SESSIONS_FILE.exists():
+    loaded_sess = _load_json_with_bak(SESSIONS_FILE)
+    if loaded_sess:
         try:
-            with open(SESSIONS_FILE, "r", encoding="utf-8") as f:
-                sessions_data.update(json.load(f))
+            sessions_data.update(loaded_sess)
         except Exception:
             pass
 
@@ -272,8 +313,31 @@ def load_all_configs():
     return combined
 
 
+def _atomic_save(target_path, data):
+    """原子写入辅助函数：写临时文件 -> 滚动备份原文件为 .bak -> 原子替换"""
+    target_path = Path(target_path)
+    tmp_path = target_path.with_suffix(target_path.suffix + ".tmp")
+    bak_path = target_path.with_suffix(target_path.suffix + ".bak")
+    
+    # 1. 写入临时文件并刷盘
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+        
+    # 2. 若原文件存在且非空，先滚动备份为 .bak
+    if target_path.exists() and target_path.stat().st_size > 0:
+        try:
+            shutil.copy2(target_path, bak_path)
+        except Exception as e:
+            _safe_log(f"⚠️ 创建配置备份 {bak_path.name} 失败: {e}")
+            
+    # 3. 原子替换目标文件
+    os.replace(tmp_path, target_path)
+
+
 def save_all_configs(combined):
-    """三轨数据分流写盘函数"""
+    """三轨数据分流写盘函数 (原子写入 + 滚动备份)"""
     # 1. 写入 app_config.json (基础配置)
     base_keys = [
         "active_model", "provider", "system_prompt", "temperature", "max_tokens",
@@ -290,8 +354,7 @@ def save_all_configs(combined):
     ]
     base_cfg = {k: combined[k] for k in base_keys if k in combined}
     try:
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(base_cfg, f, indent=4, ensure_ascii=False)
+        _atomic_save(CONFIG_FILE, base_cfg)
     except Exception as e:
         print(f"❌ 物理保存 app_config.json 失败: {e}")
 
@@ -299,8 +362,7 @@ def save_all_configs(combined):
     cred_keys = ["providers", "models"]
     cred_cfg = {k: combined[k] for k in cred_keys if k in combined}
     try:
-        with open(CREDENTIALS_FILE, "w", encoding="utf-8") as f:
-            json.dump(cred_cfg, f, indent=4, ensure_ascii=False)
+        _atomic_save(CREDENTIALS_FILE, cred_cfg)
     except Exception as e:
         print(f"❌ 物理保存 api_credentials.json 失败: {e}")
 
@@ -308,7 +370,6 @@ def save_all_configs(combined):
     sess_keys = ["active_session_id", "sessions"]
     sess_cfg = {k: combined[k] for k in sess_keys if k in combined}
     try:
-        with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
-            json.dump(sess_cfg, f, indent=4, ensure_ascii=False)
+        _atomic_save(SESSIONS_FILE, sess_cfg)
     except Exception as e:
         print(f"❌ 物理保存 chat_sessions.json 失败: {e}")

@@ -21,8 +21,8 @@
         <div class="dock-logo" title="星喵总控制台">🐾</div>
         <div class="dock-menu">
             <button id="dock-btn-chat" class="dock-item active-green" data-tooltip="💬 和星喵聊天">💬</button>
-            <button id="dock-btn-sandbox" class="dock-item active-red" data-tooltip="📝 写作猫砂盆">📝</button>
             <button id="dock-btn-sort" class="dock-item active-purple" data-tooltip="🗂️ 乖巧整理文件">🗂️</button>
+            <button id="dock-btn-browser" class="dock-item active-blue" data-tooltip="🌍 内置浏览器">🌍</button>
             <button id="dock-btn-sessions" class="dock-item" data-tooltip="📁 翻翻旧账本">📁</button>
             <button id="dock-btn-settings" class="dock-item" data-tooltip="⚙️ 星喵设置">⚙️</button>
             <button id="dock-btn-export" class="dock-item active-red" data-tooltip="📤 一键打包猫窝">📤</button>
@@ -59,30 +59,9 @@
 
         <main id="chat-container"></main>
 
-        <!-- Markdown 沙盒分屏 -->
-        <div id="sandbox-container" class="sandbox-panel" style="display: none;">
-            <div class="sandbox-header" style="display: flex; align-items: center; justify-content: space-between;">
-                <span id="sandbox-title-text">📝 Markdown 双工写作沙盒 (左侧源码，右侧实时流式渲染)</span>
-                <div style="display: flex; gap: 8px; align-items: center;">
-                    <button id="btn-sandbox-mode-edit" class="btn-secondary" style="background:#0284c7; border:none; padding:4px 10px; cursor:pointer; font-weight:bold; font-size:11px;">✍️ 编辑模式</button>
-                    <button id="btn-sandbox-mode-diff" class="btn-secondary" style="background:#475569; border:none; padding:4px 10px; cursor:pointer; font-weight:bold; font-size:11px; display:none;">🔍 差异对比</button>
-                    <button id="btn-sandbox-accept-diff" class="btn-secondary" style="background:#10b981; border:none; padding:4px 10px; cursor:pointer; font-weight:bold; font-size:11px; display:none;">✅ 接受修改</button>
-                    <button id="btn-sandbox-reject-diff" class="btn-secondary" style="background:#ef4444; border:none; padding:4px 10px; cursor:pointer; font-weight:bold; font-size:11px; display:none;">❌ 放弃修改</button>
-                    <button id="btn-inject-code" class="btn-secondary" style="background:#a855f7; border:none; padding:4px 10px; cursor:pointer; font-weight:bold; font-size:11px;">🚀 注入代码</button>
-                    <button id="btn-export-sandbox" class="btn-secondary" style="background:#4f46e5; border:none; padding:4px 10px; cursor:pointer; font-size:11px;">💾 导出 .md 文件</button>
-                </div>
-            </div>
-            <div class="sandbox-workspace">
-                <textarea id="sandbox-textarea"
-                    placeholder="沙盒内容为空。您可以直接在此键入编辑，或点击聊天气泡下的 '📥 导入至沙盒' 快速导入排版..."></textarea>
-                <div id="sandbox-preview" class="sandbox-preview-box"></div>
-                <div id="sandbox-diff-view" class="sandbox-diff-box" style="display: none;"></div>
-            </div>
-        </div>
-
         <!-- 🗂️ 智能文件分拣侧边工作舱 -->
-        <div id="sort-container" class="sandbox-panel" style="display: none; flex-direction: column;">
-            <div class="sandbox-header" style="display: flex; align-items: center; justify-content: space-between;">
+        <div id="sort-container" class="sort-panel" style="display: none; flex-direction: column;">
+            <div class="sort-header" style="display: flex; align-items: center; justify-content: space-between;">
                 <span>🗂️ 星喵智能分拣舱 (乖巧整理中)</span>
                 <div style="display: flex; gap: 8px; align-items: center;">
                     <button id="btn-sort-select-dir" class="btn-secondary" style="background:#0284c7; border:none; padding:4px 10px; cursor:pointer; font-weight:bold; font-size:11px;">📂 选择文件夹</button>
@@ -90,7 +69,7 @@
                     <button id="btn-sort-execute" class="btn-secondary" style="background:#10b981; border:none; padding:4px 10px; cursor:pointer; font-weight:bold; font-size:11px;" disabled>⚡ 一键执行分拣</button>
                 </div>
             </div>
-            <div class="sandbox-workspace" style="flex-direction: column; padding: 15px; overflow-y: auto; display: flex; gap: 15px;">
+            <div class="sort-workspace" style="flex-direction: column; padding: 15px; overflow-y: auto; display: flex; gap: 15px;">
                 <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color-subtle); padding: 10px; border-radius: 8px; flex-shrink: 0;">
                     <span style="color: #94a3b8; font-size: 11px;">目标文件夹绝对路径:</span>
                     <div style="display: flex; gap: 10px; margin-top: 6px;">
@@ -133,7 +112,11 @@
                     <option value="detect">🔍 检测</option>
                     <option value="control">⚡ 完全控制</option>
                 </select>
-                <button id="btn-deep-thinking" class="toolbar-btn deep-thinking" title="开启深度思考功能 (Deep Thinking)">🧠 深度思考</button>
+                <div id="deep-thinking-container" class="toolbar-btn deep-thinking" style="display: flex; align-items: center; padding: 2px 8px; gap: 4px; cursor: default;" title="开启深度思考功能 (Deep Thinking)">
+                    <span style="font-size: 13px;">🧠</span>
+                    <input type="range" id="slider-deep-thinking" min="1" max="3" step="1" value="1" style="width: 50px; cursor: pointer;">
+                    <span id="deep-think-label" style="font-size: 11px; width: 34px; text-align: center;">低</span>
+                </div>
                 <button id="btn-web-search" class="toolbar-btn web-search" title="开启联网搜索功能 (Web Search)">🌐 联网搜索</button>
                 <button id="btn-draw-image" class="toolbar-btn draw-image" title="生成图片 (Text-to-Image / Image-to-Image)">🎨 绘图创作</button>
             </div>
@@ -638,6 +621,24 @@
             <div class="modal-footer">
                 <button id="btn-close-cancel" class="btn-secondary" style="padding: 6px 16px; font-weight: bold;" onclick="closeCloseModal()">取消</button>
                 <button id="btn-close-ok" class="btn-primary" style="padding: 6px 16px; font-weight: bold;" onclick="confirmCloseAction()">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🌐 内置浏览器网址输入自定义 Modal -->
+    <div id="url-input-modal" class="modal-container" style="display: none;">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h4 id="lbl-url-modal-title">🌐 打开内置网页浏览器</h4>
+                <button class="modal-close-btn" onclick="closeUrlInputModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <p id="lbl-url-modal-desc" style="margin-bottom: 10px; font-size: 13px; color: var(--text-color-secondary);">请输入要浏览的网址 (留空默认 Bing):</p>
+                <input type="text" id="url-modal-input" class="chat-input" style="width: 100%; box-sizing: border-box; padding: 10px 14px; border-radius: 8px; font-size: 13px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-color);" placeholder="https://www.bing.com">
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px;">
+                <button id="btn-url-modal-cancel" class="btn-secondary" style="padding: 6px 16px; font-weight: bold;" onclick="closeUrlInputModal()">取消</button>
+                <button id="btn-url-modal-ok" class="btn-primary" style="padding: 6px 16px; font-weight: bold;" onclick="confirmUrlInputAction()">进入浏览</button>
             </div>
         </div>
     </div>

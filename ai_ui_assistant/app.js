@@ -9,7 +9,7 @@ window.onerror = function(message, source, lineno, colno, error) {
     return false;
 };
 
-window.chatHistory = []; window.isGenerating = false; window.modelList = []; window.presets = []; window.providers = {}; window.sessions = []; window.activeSessionId = "session_default"; window.modelLockMode = "free"; window.powershellMode = "normal"; window.attachedFile = null; window.fontSize = 13.5; window.deepThinkingEnabled = false; window.drawingEnabled = false; window.activeAssistantMsgElement = null; window.activeReasoningText = ""; window.activeContentText = "";
+window.chatHistory = []; window.isGenerating = false; window.modelList = []; window.presets = []; window.providers = {}; window.sessions = []; window.activeSessionId = "session_default"; window.modelLockMode = "free"; window.powershellMode = "normal"; window.attachedFile = null; window.fontSize = 13.5; window.deepThinkingLevel = 1; window.drawingEnabled = false; window.activeAssistantMsgElement = null; window.activeReasoningText = ""; window.activeContentText = "";
 window.desktopPetEnabled = false; window.desktopPetEnabledDirty = false;
 window.clipboardHistory = [];
 
@@ -72,9 +72,10 @@ window.addEventListener('pywebviewready', function () {
                 document.getElementById('config-font-size').value = window.fontSize;
                 updateGlobalFontSize(window.fontSize);
 
-                window.deepThinkingEnabled = config.deep_thinking_enabled || false;
-                const thinkingBtn = document.getElementById('btn-deep-thinking');
-                if (window.deepThinkingEnabled) { thinkingBtn.classList.add('active'); } else { thinkingBtn.classList.remove('active'); }
+                window.deepThinkingLevel = config.deep_thinking_level !== undefined ? config.deep_thinking_level : (config.deep_thinking_enabled ? 1 : 1);
+                const deepThinkSlider = document.getElementById('slider-deep-thinking');
+                if (deepThinkSlider) { deepThinkSlider.value = window.deepThinkingLevel; }
+                updateDeepThinkingLabel(window.deepThinkingLevel);
 
                 window.webSearchEnabled = config.web_search_enabled || false;
                 const searchBtn = document.getElementById('btn-web-search');
@@ -183,28 +184,12 @@ window.addEventListener('pywebviewready', function () {
                     'config-zed-quota-notify': config.zed_quota_notify || 'enabled',
                     'config-zed-win-path': config.zed_win_path || '',
                     'config-zed-wsl-path': config.zed_wsl_path || '',
-                    'config-link-zed': config.link_zed || 'disabled',
-                    'config-voice-response': config.voice_response_enabled || 'disabled',
-                    'config-voice-rate': config.voice_rate !== undefined ? config.voice_rate : '1.0',
-                    'config-tts-type': config.tts_type || 'system',
-                    'config-tts-api-url': config.tts_api_url || ''
+                    'config-link-zed': config.link_zed || 'disabled'
                 };
-                window.savedVoiceName = config.voice_name || 'default';
                 for (const [id, val] of Object.entries(fieldMappings)) {
                     const el = document.getElementById(id);
                     if (el) el.value = val;
                 }
-
-                // Initial panel visibility based on tts_type and update rate slider text
-                const initialTtsType = config.tts_type || 'system';
-                const sysEl = document.getElementById('tts-system-settings');
-                const custEl = document.getElementById('tts-custom-settings');
-                if (sysEl) sysEl.style.display = (initialTtsType === 'system') ? 'block' : 'none';
-                if (custEl) custEl.style.display = (initialTtsType === 'custom_api') ? 'block' : 'none';
-
-                const initialVoiceRate = config.voice_rate !== undefined ? config.voice_rate : 1.0;
-                const rateValSpan = document.getElementById('voice-rate-val');
-                if (rateValSpan) rateValSpan.textContent = initialVoiceRate + 'x';
 
                 window.customScripts = config.custom_scripts || [];
                 setTimeout(renderCustomScripts, 100);
@@ -334,11 +319,30 @@ function bindEventListeners() {
     document.getElementById('attach-btn').addEventListener('click', () => { document.getElementById('file-uploader').click(); });
     document.getElementById('file-uploader').addEventListener('change', handleLocalFileLoad);
 
-    document.getElementById('dock-btn-chat').addEventListener('click', () => switchSandboxMode('chat'));
-    document.getElementById('dock-btn-sandbox').addEventListener('click', () => switchSandboxMode('sandbox'));
+    document.getElementById('dock-btn-chat').addEventListener('click', () => switchWorkMode('chat'));
     const dockBtnSort = document.getElementById('dock-btn-sort');
     if (dockBtnSort) {
-        dockBtnSort.addEventListener('click', () => switchSandboxMode('sort'));
+        dockBtnSort.addEventListener('click', () => switchWorkMode('sort'));
+    }
+
+    const dockBtnBrowser = document.getElementById('dock-btn-browser');
+    if (dockBtnBrowser) {
+        dockBtnBrowser.addEventListener('click', () => {
+            showUrlInputModal();
+        });
+    }
+
+    const urlModalInput = document.getElementById('url-modal-input');
+    if (urlModalInput) {
+        urlModalInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                confirmUrlInputAction();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                closeUrlInputModal();
+            }
+        });
     }
 
     // 智能分拣控制事件绑定
@@ -355,7 +359,6 @@ function bindEventListeners() {
     }
 
     document.getElementById('btn-add-session').addEventListener('click', createNewSession);
-    document.getElementById('btn-export-sandbox').addEventListener('click', exportSandboxMarkdown);
     document.getElementById('btn-add-model').addEventListener('click', addNewModel);
     document.getElementById('btn-import-local-model').addEventListener('click', importLocalModel);
     document.getElementById('btn-import-drawing-models').addEventListener('click', importDrawingModels);
@@ -363,10 +366,21 @@ function bindEventListeners() {
     document.getElementById('btn-check-comfyui').addEventListener('click', checkComfyUIStatus);
     document.getElementById('btn-start-comfyui').addEventListener('click', startComfyUI);
 
-    document.getElementById('sandbox-textarea').addEventListener('input', handleSandboxLiveInput);
     document.getElementById('dock-btn-export').addEventListener('click', exportChatLog);
     document.getElementById('btn-scan-ollama').addEventListener('click', runOllamaRadarScan);
-    document.getElementById('btn-deep-thinking').addEventListener('click', toggleDeepThinkingMode);
+    const deepThinkSlider = document.getElementById('slider-deep-thinking');
+    if (deepThinkSlider) {
+        deepThinkSlider.addEventListener('input', function(e) {
+            if (window.isGenerating) {
+                e.preventDefault();
+                this.value = window.deepThinkingLevel;
+                return;
+            }
+            window.deepThinkingLevel = parseInt(this.value);
+            updateDeepThinkingLabel(window.deepThinkingLevel, parseInt(this.max));
+            saveSettingsSilent();
+        });
+    }
     document.getElementById('btn-scan-online').addEventListener('click', runOnlineModelScan);
     document.getElementById('btn-web-search').addEventListener('click', toggleWebSearchMode);
     document.getElementById('btn-draw-image').addEventListener('click', triggerDrawing);
@@ -545,49 +559,6 @@ function bindEventListeners() {
     if (voiceMicBtn) voiceMicBtn.addEventListener('click', toggleVoiceRecognition);
     const registerScriptBtn = document.getElementById('btn-register-script');
     if (registerScriptBtn) registerScriptBtn.addEventListener('click', registerCustomScript);
-    const injectCodeBtn = document.getElementById('btn-inject-code');
-    if (injectCodeBtn) injectCodeBtn.addEventListener('click', injectCodeToEditor);
-    const sandboxModeEdit = document.getElementById('btn-sandbox-mode-edit');
-    if (sandboxModeEdit) sandboxModeEdit.addEventListener('click', function() { setSandboxMode('edit'); });
-    const sandboxModeDiff = document.getElementById('btn-sandbox-mode-diff');
-    if (sandboxModeDiff) sandboxModeDiff.addEventListener('click', function() { setSandboxMode('diff'); });
-    const sandboxAcceptDiff = document.getElementById('btn-sandbox-accept-diff');
-    if (sandboxAcceptDiff) sandboxAcceptDiff.addEventListener('click', acceptDiffChange);
-    const sandboxRejectDiff = document.getElementById('btn-sandbox-reject-diff');
-    if (sandboxRejectDiff) sandboxRejectDiff.addEventListener('click', rejectDiffChange);
-
-    const voiceResponseEl = document.getElementById('config-voice-response');
-    if (voiceResponseEl) voiceResponseEl.addEventListener('change', saveSettingsSilent);
-    const voiceNameEl = document.getElementById('config-voice-name');
-    if (voiceNameEl) voiceNameEl.addEventListener('change', saveSettingsSilent);
-
-    // Bindings for Phase 5 Speech controls
-    const ttsTypeEl = document.getElementById('config-tts-type');
-    if (ttsTypeEl) {
-        ttsTypeEl.addEventListener('change', function() {
-            const val = this.value;
-            const sysEl = document.getElementById('tts-system-settings');
-            const custEl = document.getElementById('tts-custom-settings');
-            if (sysEl) sysEl.style.display = (val === 'system') ? 'block' : 'none';
-            if (custEl) custEl.style.display = (val === 'custom_api') ? 'block' : 'none';
-            saveSettingsSilent();
-        });
-    }
-
-    const voiceRateEl = document.getElementById('config-voice-rate');
-    if (voiceRateEl) {
-        voiceRateEl.addEventListener('input', function() {
-            const valSpan = document.getElementById('voice-rate-val');
-            if (valSpan) valSpan.textContent = this.value + 'x';
-        });
-        voiceRateEl.addEventListener('change', saveSettingsSilent);
-    }
-
-    const ttsApiUrlEl = document.getElementById('config-tts-api-url');
-    if (ttsApiUrlEl) {
-        ttsApiUrlEl.addEventListener('change', saveSettingsSilent);
-        ttsApiUrlEl.addEventListener('blur', saveSettingsSilent);
-    }
 
     document.getElementById('dash-overlay').addEventListener('click', closeAllDrawers);
     document.getElementById('dock-btn-sessions').addEventListener('click', toggleSessionsDrawer);
@@ -707,11 +678,53 @@ function renderClipboardList() {
     });
 }
 
-function toggleDeepThinkingMode() {
-    if (window.isGenerating) return;
-    const btn = document.getElementById('btn-deep-thinking');
-    window.deepThinkingEnabled = !window.deepThinkingEnabled;
-    if (window.deepThinkingEnabled) { btn.classList.add('active'); } else { btn.classList.remove('active'); }
+function updateDeepThinkingLabel(level, maxLevel = 1) {
+    const label = document.getElementById('deep-think-label');
+    const container = document.getElementById('deep-thinking-container');
+    if (!label) return;
+    
+    // level: 1 = 低, 2 = 中, 3 = 高
+    if (level === 1) {
+        label.textContent = "低";
+        label.style.color = "#a1a1aa";
+        if(container) container.classList.add('active');
+    } else if (level === 2) {
+        label.textContent = "中";
+        label.style.color = "#fbbf24";
+        if(container) container.classList.add('active');
+    } else if (level >= 3) {
+        label.textContent = "高";
+        label.style.color = "#ef4444";
+        if(container) container.classList.add('active');
+    } else {
+        label.textContent = "低";
+        label.style.color = "#a1a1aa";
+        if(container) container.classList.add('active');
+    }
+}
+
+function updateDeepThinkingMaxGears(modelId) {
+    const model = window.modelList.find(m => m.id === modelId);
+    const slider = document.getElementById('slider-deep-thinking');
+    if (!model || !slider) return;
+    
+    let maxGears = 1;
+    if (model.type === 'reasoning' || model.type === 'reasoning_tag') {
+        maxGears = 3;
+    }
+    
+    slider.min = 1;
+    slider.max = maxGears;
+    
+    if (window.deepThinkingLevel > maxGears) {
+        window.deepThinkingLevel = maxGears;
+        slider.value = maxGears;
+    } else if (window.deepThinkingLevel < 1) {
+        window.deepThinkingLevel = 1;
+        slider.value = 1;
+    }
+    
+    updateDeepThinkingLabel(window.deepThinkingLevel, maxGears);
     saveSettingsSilent();
 }
 
@@ -895,7 +908,6 @@ function switchSession(sessId) {
 }
 
 function loadSessionChatHistory() {
-    if (window.stopSpeech) window.stopSpeech();
     const container = document.getElementById('chat-container'); container.innerHTML = "";
     const activeSession = window.sessions.find(s => s.id === window.activeSessionId);
     if (!activeSession) return;
@@ -916,22 +928,38 @@ function loadSessionChatHistory() {
         if (msg.role === 'user') {
             wrap.innerHTML = `<div class="avatar user">ME</div><div class="bubble-content">${escapeHTML(msg.content)}<div class="bubble-actions"><button onclick="loadToInput(this)" class="btn-bubble-action">✏️ 载入编辑</button><button onclick="deleteMessagePair(${idx})" class="btn-bubble-action btn-bubble-delete">🗑️ 删除对话</button></div></div>`;
         } else {
-            let blockHtml = ""; let bodyText = msg.content;
-            const thinkStartIdx = msg.content.indexOf('<think>');
-            if (thinkStartIdx !== -1) {
-                const thinkEndIdx = msg.content.indexOf('</think>');
-                let reasoningText = "";
+            let blockHtml = "";
+            let bodyText = msg.content || "";
+            let reasoningText = (msg.reasoning || msg.reasoning_content || "").trim();
+
+            if (!reasoningText && bodyText.includes('<think>')) {
+                const thinkStartIdx = bodyText.indexOf('<think>');
+                const thinkEndIdx = bodyText.indexOf('</think>');
                 if (thinkEndIdx !== -1) {
-                    reasoningText = msg.content.substring(thinkStartIdx + 7, thinkEndIdx);
-                    bodyText = msg.content.substring(0, thinkStartIdx) + msg.content.substring(thinkEndIdx + 8);
-                    blockHtml = `<div id="active-reasoning-box"><details><summary>💡 已完成思考 (点击展开)</summary><div style="white-space: pre-wrap; font-family: monospace; font-size:11px;">${escapeHTML(reasoningText)}</div></details></div>`;
+                    reasoningText = bodyText.substring(thinkStartIdx + 7, thinkEndIdx).trim();
+                    bodyText = bodyText.substring(0, thinkStartIdx) + bodyText.substring(thinkEndIdx + 8);
+                } else {
+                    reasoningText = bodyText.substring(thinkStartIdx + 7).trim();
+                    bodyText = bodyText.substring(0, thinkStartIdx);
                 }
+            } else if (reasoningText && bodyText.includes('<think>')) {
+                const thinkStartIdx = bodyText.indexOf('<think>');
+                const thinkEndIdx = bodyText.indexOf('</think>');
+                if (thinkEndIdx !== -1) {
+                    bodyText = bodyText.substring(0, thinkStartIdx) + bodyText.substring(thinkEndIdx + 8);
+                } else {
+                    bodyText = bodyText.substring(0, thinkStartIdx);
+                }
+            }
+
+            if (reasoningText) {
+                blockHtml = `<div class="chat-reasoning-box"><details><summary>💡 已完成思考 (点击展开)</summary><div class="chat-reasoning-content">${escapeHTML(reasoningText)}</div></details></div>`;
             }
             var imageHtml = '';
             if (msg.image_url) {
                 imageHtml = '<div style="margin-bottom:8px;"><img src="' + msg.image_url + '" style="max-width:100%;border-radius:12px;" onerror="this.style.display=\'none\'"></div>';
             }
-            wrap.innerHTML = `${window.getAIAvatarHtml(msg.model)}<div class="bubble-content" style="width: 100%;">${imageHtml}${blockHtml}<div class="markdown-body">${parseMarkdownWithCopy(bodyText)}</div><div class="bubble-actions"><button onclick="copyBubbleText(this)" class="btn-bubble-action">📋 复制全文</button><button onclick="importToSandbox(${idx})" class="btn-bubble-action">📥 导入至沙盒</button><button onclick="importToSandboxDiff(${idx})" class="btn-bubble-action">💡 对比导入</button><button onclick="replayBubbleVoice(this)" class="btn-bubble-action btn-bubble-voice">🔊 听语音</button></div></div>`;
+            wrap.innerHTML = `${window.getAIAvatarHtml(msg.model)}<div class="bubble-content" style="width: 100%;">${imageHtml}${blockHtml}<div class="markdown-body">${parseMarkdownWithCopy(bodyText)}</div><div class="bubble-actions"><button onclick="copyBubbleText(this)" class="btn-bubble-action">📋 复制全文</button></div></div>`;
         }
         container.appendChild(wrap);
     });
@@ -1007,79 +1035,43 @@ function loadToInput(btn) {
     const input = document.getElementById('msg-input'); input.value = text; input.focus();
 }
 
-function switchSandboxMode(mode) {
+function switchWorkMode(mode) {
     const chatBtn = document.getElementById('dock-btn-chat');
-    const sandBtn = document.getElementById('dock-btn-sandbox');
     const sortBtn = document.getElementById('dock-btn-sort');
     
     const chatBox = document.getElementById('chat-container');
-    const sandBox = document.getElementById('sandbox-container');
     const sortBox = document.getElementById('sort-container');
     
     if (chatBtn) chatBtn.classList.remove('active-green', 'active-red', 'active-purple');
-    if (sandBtn) sandBtn.classList.remove('active-green', 'active-red', 'active-purple');
     if (sortBtn) sortBtn.classList.remove('active-green', 'active-red', 'active-purple');
     
     if (chatBox) chatBox.style.display = 'none';
-    if (sandBox) sandBox.style.display = 'none';
     if (sortBox) sortBox.style.display = 'none';
     
     if (mode === 'chat') {
         if (chatBtn) chatBtn.classList.add('active-green');
-        if (sandBtn) sandBtn.classList.add('active-red');
         if (sortBtn) sortBtn.classList.add('active-purple');
         if (chatBox) chatBox.style.display = 'flex';
-    } else if (mode === 'sandbox') {
-        if (chatBtn) chatBtn.classList.add('active-red');
-        if (sandBtn) sandBtn.classList.add('active-green');
-        if (sortBtn) sortBtn.classList.add('active-purple');
-        if (sandBox) sandBox.style.display = 'flex';
-        handleSandboxLiveInput();
     } else if (mode === 'sort') {
         if (chatBtn) chatBtn.classList.add('active-red');
-        if (sandBtn) sandBtn.classList.add('active-purple');
         if (sortBtn) sortBtn.classList.add('active-green');
         if (sortBox) sortBox.style.display = 'flex';
     }
 }
+window.switchWorkMode = switchWorkMode;
 
-function importToSandbox(msgIdx) {
-    const activeSession = window.sessions.find(s => s.id === window.activeSessionId);
-    if (!activeSession) return;
-    const msg = activeSession.history[msgIdx];
-    if (!msg) return;
-
-    let cleanText = msg.content;
-    const thinkStartIdx = msg.content.indexOf('<think>');
-    const thinkEndIdx = msg.content.indexOf('</think>');
-    if (thinkStartIdx !== -1 && thinkEndIdx !== -1) {
-        cleanText = msg.content.substring(0, thinkStartIdx) + msg.content.substring(thinkEndIdx + 8);
-    }
-    const textarea = document.getElementById('sandbox-textarea');
-    if (textarea.value.trim() !== "") { textarea.value += "\n\n---\n\n" + cleanText.trim(); }
-    else { textarea.value = cleanText.trim(); }
-    switchSandboxMode('sandbox');
-}
-
-function exportSandboxMarkdown() {
-    const text = document.getElementById('sandbox-textarea').value;
-    if (!text.trim()) { showToast("沙盒内无内容！", "error"); return; }
-    
-    const defaultFilename = `Draft_${Date.now()}.md`;
-    
-    if (window.pywebview && window.pywebview.api && window.pywebview.api.export_chat_log_to_file) {
-        window.pywebview.api.export_chat_log_to_file(text, defaultFilename).then(function(res) {
-            if (res.status === 'success') {
-                console.log("Sandbox draft saved to: " + res.file_path);
-                showToast("✅ 导出成功！", "success");
-            } else if (res.status === 'error') {
-                showToast("导出失败: " + res.message, "error");
-            }
-        }).catch(function(err) {
-            showToast("导出异常: " + err, "error");
-        });
-    }
-}
+window.getCleanMessageContent = function(msg) {
+    if (!msg) return "";
+    let content = msg.content || "";
+    // 移除所有可能的深度思考标签（大小写不敏感、闭合及未闭合残缺标签）
+    content = content.replace(/<think[\s\S]*?<\/think>/gi, '');
+    content = content.replace(/<think[\s\S]*/gi, '');
+    content = content.replace(/<thought[\s\S]*?<\/thought>/gi, '');
+    content = content.replace(/<thought[\s\S]*/gi, '');
+    content = content.replace(/<reasoning[\s\S]*?<\/reasoning>/gi, '');
+    content = content.replace(/<reasoning[\s\S]*/gi, '');
+    return content.trim();
+};
 
 function renderPresets() {
     const container = document.getElementById('presets-container'); container.innerHTML = "";
@@ -1279,11 +1271,6 @@ function saveSettings() {
         zed_win_path: (document.getElementById('config-zed-win-path') || {}).value || "",
         zed_wsl_path: (document.getElementById('config-zed-wsl-path') || {}).value || "",
         link_zed: (document.getElementById('config-link-zed') || {}).value || "disabled",
-        voice_response_enabled: (document.getElementById('config-voice-response') || {}).value || "disabled",
-        voice_name: (document.getElementById('config-voice-name') || {}).value || "default",
-        voice_rate: parseFloat((document.getElementById('config-voice-rate') || {}).value) || 1.0,
-        tts_type: (document.getElementById('config-tts-type') || {}).value || "system",
-        tts_api_url: (document.getElementById('config-tts-api-url') || {}).value || "",
         floating_dialogue_enabled: document.getElementById('config-floating-dialogue-enabled').value === 'true',
         auto_hide_history_dialogue: document.getElementById('config-auto-hide-history-dialogue').value === 'true',
         show_float_on_startup: document.getElementById('config-show-float-on-startup').value === 'true',
@@ -1352,7 +1339,7 @@ function saveSettingsSilent() {
         model_lock_mode: window.modelLockMode,
         powershell_mode: window.powershellMode,
         font_size: window.fontSize,
-        deep_thinking_enabled: window.deepThinkingEnabled,
+        deep_thinking_level: window.deepThinkingLevel,
         theme: document.getElementById('config-theme').value,
         lang: lang,
         close_action: closeAction,
@@ -1387,11 +1374,6 @@ function saveSettingsSilent() {
         zed_win_path: (document.getElementById('config-zed-win-path') || {}).value || "",
         zed_wsl_path: (document.getElementById('config-zed-wsl-path') || {}).value || "",
         link_zed: (document.getElementById('config-link-zed') || {}).value || "disabled",
-        voice_response_enabled: (document.getElementById('config-voice-response') || {}).value || "disabled",
-        voice_name: (document.getElementById('config-voice-name') || {}).value || "default",
-        voice_rate: parseFloat((document.getElementById('config-voice-rate') || {}).value) || 1.0,
-        tts_type: (document.getElementById('config-tts-type') || {}).value || "system",
-        tts_api_url: (document.getElementById('config-tts-api-url') || {}).value || "",
         floating_dialogue_enabled: document.getElementById('config-floating-dialogue-enabled').value === 'true',
         auto_hide_history_dialogue: document.getElementById('config-auto-hide-history-dialogue').value === 'true',
         show_float_on_startup: document.getElementById('config-show-float-on-startup').value === 'true',
@@ -1712,14 +1694,6 @@ function importLocalModel() {
     }
 }
 
-function handleSandboxLiveInput() {
-    const textarea = document.getElementById('sandbox-textarea');
-    const preview = document.getElementById('sandbox-preview');
-    if (textarea && preview) {
-        preview.innerHTML = parseMarkdownWithCopy(textarea.value);
-    }
-}
-
 function parseMarkdownWithCopy(text) {
     let html = escapeHTML(text);
     html = html.replace(/```(\w*)\n([\s\S]+?)```/g, function (match, lang, codeBody) {
@@ -1911,7 +1885,7 @@ function createAssistantBubble() {
     const persona = getModelPersona();
     const container = document.getElementById('chat-container');
     const wrap = document.createElement('div'); wrap.className = "bubble-wrap";
-    wrap.innerHTML = `<div class="avatar ai" style="background:${persona.accent};">${persona.icon}</div><div class="bubble-content" style="width: 100%;"><div id="active-reasoning-box"><details open><summary id="active-reasoning-summary">🐾 星喵思考中...</summary><div id="active-reasoning-content" style="white-space: pre-wrap;"></div></details></div><div id="active-body-content"><div class="typing-indicator"><span></span><span></span><span></span></div></div></div>`;
+    wrap.innerHTML = `<div class="avatar ai" style="background:${persona.accent};">${persona.icon}</div><div class="bubble-content" style="width: 100%;"><div id="active-reasoning-box" class="chat-reasoning-box" style="display: none;"><details open><summary id="active-reasoning-summary">🐾 星喵思考中...</summary><div id="active-reasoning-content" class="chat-reasoning-content"></div></details></div><div id="active-body-content"><div class="typing-indicator"><span></span><span></span><span></span></div></div></div>`;
     container.appendChild(wrap); scrollToBottom(true); return wrap;
 }
 
@@ -1938,7 +1912,8 @@ window.handleStreamChunk = function (payload) {
         const indicator = bodyBox.querySelector('.typing-indicator');
         if (indicator) { bodyBox.innerHTML = ""; }
         window.activeReasoningText += data.reasoning;
-        rBox.style.display = 'block'; rContent.textContent = window.activeReasoningText;
+        rBox.style.display = 'block';
+        rContent.textContent = window.activeReasoningText;
     }
 
     if (data.content) {
@@ -1946,7 +1921,7 @@ window.handleStreamChunk = function (payload) {
         if (indicator) { bodyBox.innerHTML = ""; }
         window.activeContentText += data.content;
 
-        if (activeModelType === 'reasoning_tag') {
+        if (activeModelType === 'reasoning_tag' || window.activeContentText.includes('<think>')) {
             const thinkStartIdx = window.activeContentText.indexOf('<think>');
             if (thinkStartIdx !== -1) {
                 const thinkEndIdx = window.activeContentText.indexOf('</think>');
@@ -1962,7 +1937,9 @@ window.handleStreamChunk = function (payload) {
                     bodyText = preThinkText;
                     if (rSummary) rSummary.textContent = "🤔 思考中...";
                 }
-                rBox.style.display = 'block'; rContent.textContent = reasoningText;
+                rBox.style.display = 'block';
+                rContent.textContent = reasoningText;
+                window.activeReasoningText = reasoningText;
                 bodyBox.innerHTML = parseMarkdownWithCopy(bodyText);
             } else { bodyBox.innerHTML = parseMarkdownWithCopy(window.activeContentText); }
         } else { bodyBox.innerHTML = parseMarkdownWithCopy(window.activeContentText); }
@@ -2041,13 +2018,42 @@ window.handleImageGenerated = function (payload) {
 
 window.handleStreamEnd = function () {
     if (window.activeAssistantMsgElement) {
-        const summary = window.activeAssistantMsgElement.querySelector('summary');
+        const summary = window.activeAssistantMsgElement.querySelector('#active-reasoning-summary') || window.activeAssistantMsgElement.querySelector('summary');
         if (summary) { summary.textContent = "💡 已完成思考 (点击展开)"; }
+
+        const rBox = window.activeAssistantMsgElement.querySelector('#active-reasoning-box');
+        const details = rBox ? rBox.querySelector('details') : null;
+        if (details) { details.removeAttribute('open'); }
+
+        let savedReasoning = (window.activeReasoningText || "").trim();
+        let savedContent = window.activeContentText || "";
+
+        if (!savedReasoning && savedContent.includes('<think>')) {
+            const thinkStart = savedContent.indexOf('<think>');
+            const thinkEnd = savedContent.indexOf('</think>');
+            if (thinkEnd !== -1) {
+                savedReasoning = savedContent.substring(thinkStart + 7, thinkEnd).trim();
+            } else {
+                savedReasoning = savedContent.substring(thinkStart + 7).trim();
+            }
+        }
+
+        if (rBox && !savedReasoning) {
+            rBox.style.display = 'none';
+        }
+
         const bodyBox = window.activeAssistantMsgElement.querySelector('#active-body-content');
         const indicator = bodyBox.querySelector('.typing-indicator');
         if (indicator) { bodyBox.innerHTML = "（回复中断或无正文返回）"; }
 
         const elapsedSeconds = ((performance.now() - window.generationStartTime) / 1000).toFixed(1);
+
+        let cleanBodyContent = savedContent;
+        if (cleanBodyContent.includes('<think>')) {
+            cleanBodyContent = cleanBodyContent.replace(/<think[\s\S]*?<\/think>/gi, '').replace(/<think[\s\S]*/gi, '');
+        }
+        cleanBodyContent = cleanBodyContent.replace(/<thought[\s\S]*?<\/thought>/gi, '').replace(/<thought[\s\S]*/gi, '');
+        cleanBodyContent = cleanBodyContent.replace(/<reasoning[\s\S]*?<\/reasoning>/gi, '').replace(/<reasoning[\s\S]*/gi, '').trim();
 
         const match = window.activeContentText.match(/<os_tool>([\s\S]+?)<\/os_tool>/);
         if (match && match[1]) {
@@ -2066,7 +2072,10 @@ window.handleStreamEnd = function () {
 
                 const activeSession = window.sessions.find(s => s.id === window.activeSessionId);
                 if (activeSession) {
-                    activeSession.history.push({ role: "assistant", model: activeSession.bound_model, content: window.activeContentText, latency: elapsedSeconds });
+                    const osAssistantMsg = { role: "assistant", model: activeSession.bound_model, content: cleanBodyContent, latency: elapsedSeconds };
+                    if (savedReasoning) { osAssistantMsg.reasoning = savedReasoning; }
+                    activeSession.history.push(osAssistantMsg);
+
                     const systemFeedback = `<os_result>\n${result}\n</os_result>`;
                     activeSession.history.push({ role: "system", content: systemFeedback });
                     saveSettingsSilent();
@@ -2081,15 +2090,14 @@ window.handleStreamEnd = function () {
 
         const activeSession = window.sessions.find(s => s.id === window.activeSessionId);
         if (activeSession) {
-            activeSession.history.push({ role: "assistant", model: activeSession.bound_model, content: window.activeContentText, latency: elapsedSeconds });
+            const assistantMsg = { role: "assistant", model: activeSession.bound_model, content: cleanBodyContent, latency: elapsedSeconds };
+            if (savedReasoning) { assistantMsg.reasoning = savedReasoning; }
+            activeSession.history.push(assistantMsg);
             const msgIdx = activeSession.history.length - 1;
             const actionArea = document.createElement('div');
             actionArea.className = "bubble-actions";
-            actionArea.innerHTML = `<button onclick="copyBubbleText(this)" class="btn-bubble-action">📋 复制全文</button><button onclick="importToSandbox(${msgIdx})" class="btn-bubble-action">📥 导入至沙盒</button><button onclick="importToSandboxDiff(${msgIdx})" class="btn-bubble-action">💡 对比导入</button><button onclick="replayBubbleVoice(this)" class="btn-bubble-action btn-bubble-voice">🔊 听语音</button>`;
+            actionArea.innerHTML = `<button onclick="copyBubbleText(this)" class="btn-bubble-action">📋 复制全文</button>`;
             window.activeAssistantMsgElement.querySelector('.bubble-content').appendChild(actionArea);
-
-            // 语音播报回复
-            speakText(window.activeContentText);
 
             const metaStatsEl = document.createElement('div');
             metaStatsEl.style.fontSize = "9.5px"; metaStatsEl.style.color = "#4b5563"; metaStatsEl.style.marginTop = "4px"; metaStatsEl.style.textAlign = "right";
@@ -2440,7 +2448,21 @@ function exportChatLog() {
     let mdText = `# Chat Session: ${activeSession.title}\n\n`;
     activeSession.history.forEach(msg => {
         const roleName = msg.role === 'user' ? 'User' : (msg.role === 'system' ? 'System' : 'Assistant');
-        mdText += `## ${roleName}\n\n${msg.content}\n\n---\n\n`;
+        let bodyContent = msg.content || "";
+        let thinkContent = (msg.reasoning || msg.reasoning_content || "").trim();
+        if (!thinkContent && bodyContent.includes('<think>')) {
+            const s = bodyContent.indexOf('<think>');
+            const e = bodyContent.indexOf('</think>');
+            if (e !== -1) {
+                thinkContent = bodyContent.substring(s + 7, e).trim();
+                bodyContent = bodyContent.substring(0, s) + bodyContent.substring(e + 8);
+            }
+        }
+        if (thinkContent) {
+            mdText += `## ${roleName}\n\n> 💡 **深度思考过程**:\n> ${thinkContent.replace(/\n/g, '\n> ')}\n\n${bodyContent.trim()}\n\n---\n\n`;
+        } else {
+            mdText += `## ${roleName}\n\n${bodyContent.trim()}\n\n---\n\n`;
+        }
     });
 
     const defaultFilename = `${activeSession.title.replace(/\s+/g, '_')}_ChatLog_${Date.now()}.md`;
@@ -2545,8 +2567,6 @@ function applyLanguage(lang) {
     // 更新 Dock 图标提示
     const btnChat = document.getElementById('dock-btn-chat');
     if (btnChat) { btnChat.title = dict.btnChat; }
-    const btnSandbox = document.getElementById('dock-btn-sandbox');
-    if (btnSandbox) { btnSandbox.title = dict.btnSandbox; }
     const btnSessions = document.getElementById('dock-btn-sessions');
     if (btnSessions) { btnSessions.title = dict.btnSessions; }
     const btnSettings = document.getElementById('dock-btn-settings');
@@ -2679,12 +2699,52 @@ function onCloseActionChange() {
     saveSettingsSilent();
 }
 
+// 🌐 内置浏览器Modal逻辑
+function showUrlInputModal(defaultUrl = "https://www.bing.com") {
+    const modal = document.getElementById('url-input-modal');
+    const input = document.getElementById('url-modal-input');
+    if (input) {
+        input.value = defaultUrl;
+    }
+    if (modal) {
+        modal.style.display = 'flex';
+        setTimeout(() => {
+            if (input) {
+                input.focus();
+                input.select();
+            }
+        }, 50);
+    }
+}
+
+function closeUrlInputModal() {
+    const modal = document.getElementById('url-input-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+function confirmUrlInputAction() {
+    const modal = document.getElementById('url-input-modal');
+    const input = document.getElementById('url-modal-input');
+    let url = input ? input.value.trim() : "";
+    if (!url) url = "https://www.bing.com";
+    if (!/^https?:\/\//i.test(url)) {
+        url = "https://" + url;
+    }
+    if (modal) modal.style.display = 'none';
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_builtin_browser) {
+        window.pywebview.api.open_builtin_browser(url);
+    }
+}
+
+window.showUrlInputModal = showUrlInputModal;
+window.closeUrlInputModal = closeUrlInputModal;
+window.confirmUrlInputAction = confirmUrlInputAction;
+
 const i18n = {
     zh: {
         title: "大模型工作站",
         subtitle: "读取配置中...",
         btnChat: "💬 对话",
-        btnSandbox: "📝 沙盒",
         btnSessions: "📁 历史会话",
         btnSettings: "⚙️ 系统设置",
         btnExport: "📤 导出",
@@ -2729,7 +2789,6 @@ const i18n = {
         title: "AI Workstation",
         subtitle: "Loading configuration...",
         btnChat: "💬 Chat",
-        btnSandbox: "📝 Sandbox",
         btnSessions: "📁 Sessions",
         btnSettings: "⚙️ Settings",
         btnExport: "📤 Export",
@@ -2774,7 +2833,6 @@ const i18n = {
         title: "Estación IA",
         subtitle: "Cargando configuración...",
         btnChat: "💬 Chat",
-        btnSandbox: "📝 Sandbox",
         btnSessions: "📁 Sesiones",
         btnSettings: "⚙️ Ajustes",
         btnExport: "📤 Exportar",
@@ -2819,7 +2877,6 @@ const i18n = {
         title: "AI ワークステーション",
         subtitle: "設定を読み込み中...",
         btnChat: "💬 チャット",
-        btnSandbox: "📝 サンドボックス",
         btnSessions: "📁 セッション",
         btnSettings: "⚙️ システム设置",
         btnExport: "📤 エクスポート",
@@ -2864,7 +2921,6 @@ const i18n = {
         title: "Station d'IA",
         subtitle: "Chargement de la config...",
         btnChat: "💬 Chat",
-        btnSandbox: "📝 Sandbox",
         btnSessions: "📁 Sessions",
         btnSettings: "⚙️ Paramètres",
         btnExport: "📤 Exporter",
@@ -2909,7 +2965,6 @@ const i18n = {
         title: "KI-Workstation",
         subtitle: "Konfiguration wird geladen...",
         btnChat: "💬 Chat",
-        btnSandbox: "📝 Sandbox",
         btnSessions: "📁 Sitzungen",
         btnSettings: "⚙️ Einstellungen",
         btnExport: "📤 Exportieren",
@@ -2954,7 +3009,6 @@ const i18n = {
         title: "Станция ИИ",
         subtitle: "Загрузка конфигурации...",
         btnChat: "💬 Чат",
-        btnSandbox: "📝 Песочница",
         btnSessions: "📁 Сессии",
         btnSettings: "⚙️ Настройки",
         btnExport: "📤 Экспорт",
@@ -3045,7 +3099,6 @@ window.handleSpotlightBackdropClick = function(e) {
 const SPOTLIGHT_CMDS = [
     { id: '/clean', title: '🧹 清理临时文件', desc: '执行 Windows 系统临时文件夹清理', action: () => runBuiltinScript('clean_temp', 'powershell', 'Remove-Item -Path $env:TEMP\\* -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "✅ 临时文件清理完毕！"') },
     { id: '/ip', title: '🌐 本机网络配置', desc: '获取本机 IP 地址及适配器信息', action: () => runBuiltinScript('check_ip', 'powershell', 'ipconfig | Select-String "IPv4" | Write-Host') },
-    { id: '/sandbox', title: '📝 打开沙盒编辑器', desc: '切换至 Markdown 独立写作沙盒', action: () => { window.toggleSpotlightOverlay(); switchSandboxMode('sandbox'); } },
     { id: '/settings', title: '⚙️ 打开设置中心', desc: '进入仪表盘系统设置', action: () => { window.toggleSpotlightOverlay(); toggleDashboard(); } }
 ];
 
@@ -3157,177 +3210,7 @@ function updateSelectedSpotlightItem(items) {
 }
 
 
-// 2. 沙盒 Git 差异对比双屏视图 (LCS 算法)
-window.sandboxOriginalText = '';
-window.sandboxModifiedText = '';
-
-function diffLines(oldText, newText) {
-    const oldLines = oldText.split('\n');
-    const newLines = newText.split('\n');
-    const dp = Array(oldLines.length + 1).fill(null).map(() => Array(newLines.length + 1).fill(0));
-    
-    for (let i = 1; i <= oldLines.length; i++) {
-        for (let j = 1; j <= newLines.length; j++) {
-            if (oldLines[i - 1] === newLines[j - 1]) {
-                dp[i][j] = dp[i - 1][j - 1] + 1;
-            } else {
-                dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-            }
-        }
-    }
-    
-    const diff = [];
-    let i = oldLines.length;
-    let j = newLines.length;
-    
-    while (i > 0 || j > 0) {
-        if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
-            diff.unshift({ type: 'unchanged', oldLine: oldLines[i - 1], newLine: newLines[j - 1], oldNo: i, newNo: j });
-            i--;
-            j--;
-        } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-            diff.unshift({ type: 'added', line: newLines[j - 1], newNo: j });
-            j--;
-        } else {
-            diff.unshift({ type: 'deleted', line: oldLines[i - 1], oldNo: i });
-            i--;
-        }
-    }
-    return diff;
-}
-
-window.importToSandboxDiff = function(msgIdx) {
-    const activeSession = window.sessions.find(s => s.id === window.activeSessionId);
-    if (!activeSession) return;
-    const msg = activeSession.history[msgIdx];
-    if (!msg) return;
-
-    let cleanText = msg.content;
-    const thinkStartIdx = msg.content.indexOf('<think>');
-    const thinkEndIdx = msg.content.indexOf('</think>');
-    if (thinkStartIdx !== -1 && thinkEndIdx !== -1) {
-        cleanText = msg.content.substring(0, thinkStartIdx) + msg.content.substring(thinkEndIdx + 8);
-    }
-    
-    window.sandboxOriginalText = document.getElementById('sandbox-textarea').value;
-    window.sandboxModifiedText = cleanText.trim();
-    
-    // 打开沙盒面板并切换为差异对比
-    switchSandboxMode('sandbox');
-    setSandboxMode('diff');
-};
-
-function setSandboxMode(mode) {
-    const textarea = document.getElementById('sandbox-textarea');
-    const preview = document.getElementById('sandbox-preview');
-    const diffView = document.getElementById('sandbox-diff-view');
-    
-    const btnEdit = document.getElementById('btn-sandbox-mode-edit');
-    const btnDiff = document.getElementById('btn-sandbox-mode-diff');
-    const btnAccept = document.getElementById('btn-sandbox-accept-diff');
-    const btnReject = document.getElementById('btn-sandbox-reject-diff');
-    
-    if (mode === 'edit') {
-        textarea.style.display = 'block';
-        preview.style.display = 'block';
-        diffView.style.display = 'none';
-        
-        btnEdit.style.background = '#0284c7';
-        btnDiff.style.display = 'none';
-        btnAccept.style.display = 'none';
-        btnReject.style.display = 'none';
-        
-        handleSandboxLiveInput();
-    } else if (mode === 'diff') {
-        textarea.style.display = 'none';
-        preview.style.display = 'none';
-        diffView.style.display = 'flex';
-        
-        btnEdit.style.background = '#475569';
-        btnDiff.style.display = 'block';
-        btnDiff.style.background = '#8b5cf6';
-        btnAccept.style.display = 'block';
-        btnReject.style.display = 'block';
-        
-        renderDiffView();
-    }
-}
-
-function renderDiffView() {
-    const container = document.getElementById('sandbox-diff-view');
-    if (!container) return;
-    
-    const diffs = diffLines(window.sandboxOriginalText, window.sandboxModifiedText);
-    
-    let leftHtml = `<div class="diff-pane-header">Original (原有代码)</div><div class="diff-content">`;
-    let rightHtml = `<div class="diff-pane-header">Modified (AI 建议修改)</div><div class="diff-content">`;
-    
-    diffs.forEach(line => {
-        if (line.type === 'unchanged') {
-            leftHtml += `<div class="diff-line"><span class="diff-num">${line.oldNo}</span><span class="diff-text">${escapeHTML(line.oldLine)}</span></div>`;
-            rightHtml += `<div class="diff-line"><span class="diff-num">${line.newNo}</span><span class="diff-text">${escapeHTML(line.newLine)}</span></div>`;
-        } else if (line.type === 'deleted') {
-            leftHtml += `<div class="diff-line deleted"><span class="diff-num">${line.oldNo}</span><span class="diff-text">- ${escapeHTML(line.line)}</span></div>`;
-            rightHtml += `<div class="diff-line empty"><span class="diff-num">&nbsp;</span><span class="diff-text"></span></div>`;
-        } else if (line.type === 'added') {
-            leftHtml += `<div class="diff-line empty"><span class="diff-num">&nbsp;</span><span class="diff-text"></span></div>`;
-            rightHtml += `<div class="diff-line added"><span class="diff-num">${line.newNo}</span><span class="diff-text">+ ${escapeHTML(line.line)}</span></div>`;
-        }
-    });
-    
-    leftHtml += `</div>`;
-    rightHtml += `</div>`;
-    
-    container.innerHTML = `
-        <div id="diff-pane-left" class="diff-pane" style="border-right: 1px solid rgba(255,255,255,0.06);">${leftHtml}</div>
-        <div id="diff-pane-right" class="diff-pane">${rightHtml}</div>
-    `;
-    
-    // 双向同步滚动绑定
-    const leftPane = document.getElementById('diff-pane-left');
-    const rightPane = document.getElementById('diff-pane-right');
-    if (leftPane && rightPane) {
-        leftPane.onscroll = function() { rightPane.scrollTop = leftPane.scrollTop; rightPane.scrollLeft = leftPane.scrollLeft; };
-        rightPane.onscroll = function() { leftPane.scrollTop = rightPane.scrollTop; leftPane.scrollLeft = rightPane.scrollLeft; };
-    }
-}
-
-function acceptDiffChange() {
-    const textarea = document.getElementById('sandbox-textarea');
-    if (textarea) {
-        textarea.value = window.sandboxModifiedText;
-    }
-    setSandboxMode('edit');
-    showToast('已采纳差异修改 ✅', 'success');
-}
-
-function rejectDiffChange() {
-    setSandboxMode('edit');
-    showToast('已放弃差异修改 ❌', 'info');
-}
-
-
-// 3. 一键粘贴注入代码
-function injectCodeToEditor() {
-    const code = document.getElementById('sandbox-textarea').value;
-    if (!code.trim()) {
-        showToast('沙盒内无代码，无法注入！', 'error');
-        return;
-    }
-    if (window.pywebview && window.pywebview.api && window.pywebview.api.inject_code_to_active_editor) {
-        showToast('🚀 正在注入当前光标聚焦的编辑器...', 'info');
-        window.pywebview.api.inject_code_to_active_editor(code).then(function(res) {
-            if (res.status === 'success') {
-                showToast('注入成功！已返回主焦点', 'success');
-            } else {
-                showToast('注入失败: ' + res.message, 'error');
-            }
-        });
-    }
-}
-
-
-// 4. 自定义快捷脚本箱
+// 2. 自定义快捷脚本箱
 function renderCustomScripts() {
     const container = document.getElementById('custom-scripts-list');
     const drawerContainer = document.getElementById('drawer-scripts-container');
@@ -3491,7 +3374,7 @@ window.onScriptError = function(id, errMsg) {
 };
 
 
-// 5. 语音输入 (STT) 与语音播报 (TTS)
+// 5. 语音输入 (STT)
 let voiceRecognition = null;
 let isVoiceListening = false;
 
@@ -3571,210 +3454,6 @@ function stopVoiceListening() {
         btn.classList.remove('listening');
         btn.title = '点击开始语音听写';
     }
-}
-
-// Keep track of the currently playing button and audio
-window.activeVoiceBtn = null;
-window.currentAudio = null;
-
-// Stop speech and reset button
-window.stopSpeech = function() {
-    if (window.currentAudio) {
-        try {
-            window.currentAudio.pause();
-        } catch (e) {}
-        window.currentAudio = null;
-    }
-    if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-    }
-    if (window.activeVoiceBtn) {
-        window.activeVoiceBtn.innerHTML = "🔊 听语音";
-        window.activeVoiceBtn.classList.remove('speaking');
-        window.activeVoiceBtn = null;
-    }
-};
-
-// TTS 播报回复
-window.speakText = function(text, forcePlay = false, btn = null) {
-    const voiceMode = (document.getElementById('config-voice-response') || {}).value || 'disabled';
-    if (voiceMode === 'disabled' && !forcePlay) return;
-    
-    // Toggle functionality: if the same button is clicked again, stop speech and exit
-    if (btn && window.activeVoiceBtn === btn) {
-        window.stopSpeech();
-        return;
-    }
-
-    // Stop any currently playing audio and reset its button state
-    window.stopSpeech();
-    
-    // Clean text by removing think tags and markdown formatters
-    let cleanText = text;
-    const thinkEndIdx = text.indexOf('</think>');
-    if (thinkEndIdx !== -1) {
-        cleanText = text.substring(thinkEndIdx + 8);
-    }
-    if (cleanText.includes('<think>')) {
-        cleanText = cleanText.replace(/<think>[\s\S]*$/, '');
-    }
-    cleanText = cleanText.replace(/[*#`_\-]/g, '').trim();
-    if (!cleanText) return;
-
-    // Apply active state if a button is supplied
-    if (btn) {
-        window.activeVoiceBtn = btn;
-        btn.innerHTML = "⏹️ 停语音";
-        btn.classList.add('speaking');
-    }
-
-    const ttsType = (document.getElementById('config-tts-type') || {}).value || 'system';
-    if (ttsType === 'custom_api') {
-        let apiUrl = (document.getElementById('config-tts-api-url') || {}).value || '';
-        if (!apiUrl) {
-            apiUrl = "http://127.0.0.1:9880/?text={text}&text_language=zh";
-        }
-        
-        // Replace {text} placeholder with URL encoded text
-        const encodedText = encodeURIComponent(cleanText);
-        let targetUrl = apiUrl;
-        if (apiUrl.includes('{text}')) {
-            targetUrl = apiUrl.replace('{text}', encodedText);
-        } else {
-            // fallback append
-            const separator = apiUrl.includes('?') ? '&' : '?';
-            targetUrl = `${apiUrl}${separator}text=${encodedText}`;
-        }
-        
-        try {
-            const audio = new Audio(targetUrl);
-            window.currentAudio = audio;
-            
-            audio.addEventListener('ended', () => {
-                if (window.activeVoiceBtn === btn) {
-                    window.stopSpeech();
-                }
-            });
-            audio.addEventListener('error', () => {
-                if (window.activeVoiceBtn === btn) {
-                    window.stopSpeech();
-                }
-            });
-
-            audio.play().catch(err => {
-                console.error("Custom TTS playback failed:", err);
-                if (window.activeVoiceBtn === btn) {
-                    window.stopSpeech();
-                }
-            });
-        } catch (e) {
-            console.error("Failed to create Audio instance:", e);
-            if (window.activeVoiceBtn === btn) {
-                window.stopSpeech();
-            }
-        }
-    } else {
-        // System Web Speech API
-        if ('speechSynthesis' in window) {
-            const utterance = new SpeechSynthesisUtterance(cleanText.substring(0, 1000));
-            utterance.lang = 'zh-CN';
-            
-            // Apply voice rate slider value
-            const rateInput = document.getElementById('config-voice-rate');
-            if (rateInput) {
-                utterance.rate = parseFloat(rateInput.value) || 1.0;
-            }
-            
-            const voices = window.speechSynthesis.getVoices();
-            const selectedVoiceName = (document.getElementById('config-voice-name') || {}).value || 'default';
-            
-            let targetVoice = null;
-            if (selectedVoiceName !== 'default') {
-                targetVoice = voices.find(v => v.name === selectedVoiceName);
-            }
-            
-            if (!targetVoice) {
-                targetVoice = voices.find(v => v.lang.includes('zh') && (v.name.includes('Huihui') || v.name.includes('Yaoyao') || v.name.includes('Microsoft') || v.name.includes('Google')));
-            }
-            
-            if (targetVoice) {
-                utterance.voice = targetVoice;
-            }
-
-            utterance.onend = () => {
-                if (window.activeVoiceBtn === btn) {
-                    window.stopSpeech();
-                }
-            };
-            utterance.onerror = () => {
-                if (window.activeVoiceBtn === btn) {
-                    window.stopSpeech();
-                }
-            };
-
-            window.speechSynthesis.speak(utterance);
-        }
-    }
-};
-
-window.replayBubbleVoice = function(btn) {
-    const bubble = btn.closest('.bubble-content');
-    if (!bubble) return;
-    
-    // Attempt to locate markdown body first
-    const textNode = bubble.querySelector('.markdown-body');
-    let text = "";
-    if (textNode) {
-        text = textNode.innerText;
-    } else {
-        // Fallback: use bubble innerText but clean up actions block and thinking details
-        let bubbleClone = bubble.cloneNode(true);
-        const reasoningBox = bubbleClone.querySelector('#active-reasoning-box') || bubbleClone.querySelector('details');
-        if (reasoningBox) reasoningBox.remove();
-        
-        const actions = bubbleClone.querySelector('.bubble-actions');
-        if (actions) actions.remove();
-        
-        text = bubbleClone.innerText;
-    }
-    
-    // Call speakText with forcePlay = true and pass btn
-    window.speakText(text, true, btn);
-};
-
-window.populateTtsVoices = function() {
-    if (!('speechSynthesis' in window)) return;
-    const voices = window.speechSynthesis.getVoices();
-    const select = document.getElementById('config-voice-name');
-    if (!select) return;
-    
-    const savedVoiceName = window.savedVoiceName || 'default';
-    select.innerHTML = '<option value="default">默认系统音色</option>';
-    
-    const zhVoices = voices.filter(v => v.lang.includes('zh'));
-    const otherVoices = voices.filter(v => !v.lang.includes('zh'));
-    
-    zhVoices.forEach(v => {
-        const opt = document.createElement('option');
-        opt.value = v.name;
-        opt.textContent = `🇨🇳 ${v.name} (${v.lang})`;
-        if (v.name === savedVoiceName) opt.selected = true;
-        select.appendChild(opt);
-    });
-    
-    otherVoices.forEach(v => {
-        const opt = document.createElement('option');
-        opt.value = v.name;
-        opt.textContent = `🌐 ${v.name} (${v.lang})`;
-        if (v.name === savedVoiceName) opt.selected = true;
-        select.appendChild(opt);
-    });
-};
-
-if ('speechSynthesis' in window) {
-    window.speechSynthesis.onvoiceschanged = window.populateTtsVoices;
-    // 延迟少许拉起以防WebView加载竞态
-    setTimeout(window.populateTtsVoices, 300);
 }
 
 // ==========================================
@@ -4678,3 +4357,18 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
+
+// Toggle dock-sidebar lock state on logo click
+(function initDockLogoToggle() {
+    const dockLogo = document.querySelector('.dock-logo');
+    if (dockLogo) {
+        dockLogo.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const dockSidebar = document.querySelector('.dock-sidebar');
+            if (dockSidebar) {
+                dockSidebar.classList.toggle('always-open');
+            }
+        });
+    }
+})();
+

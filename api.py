@@ -102,6 +102,7 @@ class AppAPI:
         self._comfyui_process = None
         self._float_window = None
         self._pet_window = None
+        self._browser_window = None
         self._config = load_all_configs()
         if AppAPI._pet_enabled_state is None:
             AppAPI._pet_enabled_state = self._coerce_bool(self._config.get("desktop_pet_enabled", False))
@@ -198,6 +199,40 @@ class AppAPI:
         self._config = load_all_configs()
         self._config["floating_dialogue_enabled"] = False
         save_all_configs(self._config)
+
+    def open_builtin_browser(self, url="https://www.bing.com"):
+        import webview
+        if not url.strip():
+            url = "https://www.bing.com"
+        elif not url.startswith("http://") and not url.startswith("https://"):
+            url = "https://" + url
+
+        if not getattr(self, '_browser_window', None):
+            self._browser_window = webview.create_window(
+                "星喵 - 内置浏览器", 
+                url=url, 
+                width=1024, 
+                height=768,
+                confirm_close=False
+            )
+            self._browser_window.events.closed += self._on_browser_closed
+        else:
+            self._browser_window.load_url(url)
+            self._browser_window.restore()
+        return "ok"
+
+    def _on_browser_closed(self):
+        self._browser_window = None
+
+    def get_builtin_browser_content(self):
+        if getattr(self, '_browser_window', None):
+            try:
+                res = self._browser_window.evaluate_js('document.body.innerText')
+                return res if res else ""
+            except Exception as e:
+                print(f"[Warn] get_builtin_browser_content failed: {e}")
+                return ""
+        return ""
         # 同步主界面的 UI 开关状态
         if self._main_window:
             try:
@@ -1349,6 +1384,22 @@ class AppAPI:
             data = json.loads(action_json_str)
             action = data.get("action")
             
+            # 🛡️ 权限止损闸门 (Phase 0 最小止损：解决 SRD 问题 P3)
+            cfg = load_all_configs()
+            control_level = cfg.get("agent_control_level", "ask")
+            if control_level == "ask" and action in ("delete_item", "write_file", "run_powershell", "run_python"):
+                action_names = {
+                    "delete_item": "移入回收站",
+                    "write_file": "写入/覆盖文件",
+                    "run_powershell": "执行系统命令",
+                    "run_python": "执行Python脚本"
+                }
+                act_cn = action_names.get(action, action)
+                return (
+                    f"⚠️ 权限受限拦截：当前控制级别为【询问确认】模式，已安全阻止高危动作 [{act_cn}] 执行。\n"
+                    f"👉 若信任并需执行此操作，请在「设置 → 权限控制级别」中切换为【检测】或【完全控制】。"
+                )
+
             # 1. 浏览目录文件
             if action == "list_dir":
                 path = data.get("path")
@@ -1388,17 +1439,17 @@ class AppAPI:
                 shutil.move(src, dest)
                 return f"✅ 成功将文件从 [{src}] 移动至 [{dest}]"
             
-            # 5. 彻底无限制安全物理删除
+            # 5. 安全移入系统回收站 (解决物理删除风险 P2)
             elif action == "delete_item":
                 path = data.get("path")
-                if not os.path.exists(path):
+                if not path or not os.path.exists(path):
                     return f"❌ 错误：目标删除路径 [{path}] 并不存在！"
-                if os.path.isdir(path):
-                    shutil.rmtree(path)
-                    return f"✅ 成功安全删除本地文件夹: [{path}]"
-                else:
-                    os.remove(path)
-                    return f"✅ 成功安全删除本地文件: [{path}]"
+                try:
+                    import send2trash
+                    send2trash.send2trash(path)
+                    return f"✅ 成功将目标移入系统回收站（可随时撤销恢复）: [{path}]"
+                except Exception as del_err:
+                    return f"❌ 移入回收站失败: {str(del_err)}"
 
             # 6. 物理读取本地任何文件
             elif action == "read_file":
@@ -1423,10 +1474,10 @@ class AppAPI:
                 except Exception as write_err:
                     return f"❌ 写入保存文本到文件时失败: {str(write_err)}"
 
-            # 8. PowerShell 命令执行器 (默认最高权限)
+            # 8. PowerShell 命令执行器 (默认安全非提权模式)
             elif action == "run_powershell":
                 command = data.get("command")
-                return self._run_powershell_sandbox(command, True)
+                return self._run_powershell_sandbox(command, run_as_admin=False)
 
             # 9. 代码解释器重度通道
             elif action == "run_python":
@@ -1693,8 +1744,14 @@ class AppAPI:
             )
 
             # 深度思考状态逻辑
-            deep_thinking = self._config.get("deep_thinking_enabled", False)
-            if deep_thinking:
+            deep_thinking_level = self._config.get("deep_thinking_level", 0)
+            if deep_thinking_level == 1:
+                framework_instructions += "\n注意：当前用户已开启[常规深度思考]模式，请使用基础逻辑拆解方法逐步执行任务。"
+            elif deep_thinking_level == 2:
+                framework_instructions += "\n注意：当前用户已开启[强深度思考]模式，请务必使用极其严密的逻辑拆解方法深度思考并逐步执行任务，确保推导无误。"
+            elif deep_thinking_level >= 3:
+                framework_instructions += "\n注意：当前用户已开启[极强深度思考]模式，请务必发挥极限逻辑推演能力，深入剖析每一步细节并严格精细化执行。"
+            elif self._config.get("deep_thinking_enabled", False):
                 framework_instructions += "\n注意：当前用户已开启[深度思考]模式，请使用更强的逻辑、更长的推理链路来决策指令执行步骤。"
 
             if "write_file" not in base_prompt:
@@ -1717,6 +1774,8 @@ class AppAPI:
             for h in history:
                 role = h.get("role")
                 content = h.get("content", "").strip()
+                if role == "assistant" and "<think>" in content:
+                    content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
                 if role in ("user", "assistant", "system") and content:
                     messages.append({"role": role, "content": content})
 

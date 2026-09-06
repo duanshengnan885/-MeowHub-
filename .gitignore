@@ -2,6 +2,8 @@
 /api_credentials.json
 /app_config.json
 /chat_sessions.json
+*.bak
+*.tmp
 /__pycache__
 /build
 /dist
@@ -9,5 +11,5 @@
 .balance_snapshot.json
 debug_js.log
 /.idea/
-/memory/
+
 /scripts/local_backup.py
